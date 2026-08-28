@@ -12,6 +12,7 @@ A cloudless, account-free local messaging and file transfer application for Andr
 - Persistent settings, light/dark/system themes, device management, and diagnostic logs
 - Android Storage Access Framework support for selecting folders such as `Download`
 - Synchronized collision policies (rename, overwrite, or skip) and a diagnostics panel with ports, peers, discovery counters, and transfer directories
+- Optional PIN app lock that re-locks when the app returns from background; only a SHA-256 digest is persisted
 
 ## Build
 

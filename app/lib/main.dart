@@ -370,7 +370,10 @@ class _LockGateState extends State<_LockGate> with WidgetsBindingObserver {
       builder: (ctx) => AlertDialog(
         title: const Text('应用已锁定'),
         content: TextField(controller: ctrl, autofocus: true, obscureText: true, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '输入 PIN')),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('解锁'))],
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('解锁')),
+        ],
       ),
     );
     if (pin == null) return;
