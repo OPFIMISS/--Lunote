@@ -192,7 +192,8 @@ class MainActivity : FlutterActivity() {
             val tree = Uri.parse(treeUriString)
             val name = java.io.File(path).name
             val doc = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-            val target = DocumentsContract.createDocument(contentResolver, doc, "application/octet-stream", name) ?: return false
+            val mime = java.net.URLConnection.guessContentTypeFromName(name) ?: "application/octet-stream"
+            val target = DocumentsContract.createDocument(contentResolver, doc, mime, name) ?: return false
             contentResolver.openOutputStream(target)?.use { out -> java.io.File(path).inputStream().use { it.copyTo(out) } } ?: return false
             true
         } catch (e: Exception) {

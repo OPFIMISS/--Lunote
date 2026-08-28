@@ -345,7 +345,7 @@ class AppState extends ChangeNotifier {
         final t = TransferItem.fromJson(e);
         _hiddenConversationIds.remove(t.peerDeviceId);
         _upsertTransfer(t);
-        if (t.isDone && receiveTreeUri != null && t.localPath != null) {
+        if (t.isDone && !t.isOutgoing && receiveTreeUri != null && t.localPath != null) {
           unawaited(_exportReceivedToTree(t));
         }
         if (t.state == 'done' || t.state == 'failed' || t.isOffered) {
