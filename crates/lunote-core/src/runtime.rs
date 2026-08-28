@@ -57,6 +57,7 @@ pub struct Runtime {
     pub sessions: Arc<SessionManager>,
     pub transfers: Arc<TransferManager>,
     pub downloads_dir: PathBuf,
+    pub tcp_port: u16,
     pub auto_trust: Arc<AtomicBool>,
     /// 用户自定义接收目录（settings.json 持久化；None=用默认 downloads_dir）
     pub downloads_dir_setting: Mutex<Option<PathBuf>>,
@@ -182,6 +183,7 @@ impl Runtime {
             sessions,
             transfers,
             downloads_dir,
+            tcp_port: cfg.tcp_port,
             auto_trust,
             downloads_dir_setting,
             theme_setting,
@@ -453,6 +455,20 @@ impl Runtime {
 
     pub fn discovery_stats(&self) -> crate::discovery::DiscoveryStats {
         self.discovery.stats()
+    }
+
+    pub fn diagnostics(&self) -> serde_json::Value {
+        let stats = self.discovery_stats();
+        serde_json::json!({
+            "device_id": self.identity.device_id,
+            "device_name": self.identity.name(),
+            "tcp_port": self.tcp_port,
+            "peers_online": self.peers().iter().filter(|p| p.online).count(),
+            "peers_total": self.peers().len(),
+            "discovery": stats,
+            "data_dir": self.data_dir.to_string_lossy(),
+            "downloads_dir": self.downloads_dir_setting.lock().unwrap().as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| self.downloads_dir.to_string_lossy().to_string()),
+        })
     }
 
     pub fn stop(&self) {

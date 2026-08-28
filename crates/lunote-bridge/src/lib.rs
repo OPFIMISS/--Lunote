@@ -349,6 +349,10 @@ fn dispatch(runtime: &Runtime, rt: &tokio::runtime::Runtime, cmd_json: &str) -> 
                 .to_string_lossy()
                 .replace('\\', "/")
         )),
+        "diagnostics" => ok(&format!(
+            ",\"diagnostics\":{}",
+            serde_json::to_string(&runtime.diagnostics())?
+        )),
         _ => Err(anyhow!("未知命令: {}", cmd)),
     }
 }

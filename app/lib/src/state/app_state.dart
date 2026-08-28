@@ -595,6 +595,11 @@ class AppState extends ChangeNotifier {
     return r['error'] as String? ?? '设置失败';
   }
 
+  Future<Map<String, dynamic>> diagnostics() async {
+    final r = await core.call('diagnostics');
+    return (r['diagnostics'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
+  }
+
   Future<Map<String, dynamic>> exportRecords(String password, String outPath) =>
       core.call('export', {'password': password, 'out': outPath});
 

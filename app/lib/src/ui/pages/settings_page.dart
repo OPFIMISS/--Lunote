@@ -22,6 +22,8 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   static const _platform = MethodChannel('com.lunote.lunote_app/platform');
   late final TextEditingController _nameCtrl;
+  bool _loadingDiagnostics = false;
+  Map<String, dynamic>? _diagnostics;
 
   @override
   void initState() {
@@ -56,6 +58,41 @@ class _SettingsPageState extends State<SettingsPage> {
       }
     } catch (e) {
       _toast('打开目录失败：$e');
+    }
+  }
+
+  Future<void> _showDiagnostics() async {
+    setState(() => _loadingDiagnostics = true);
+    try {
+      final data = await context.read<AppState>().diagnostics();
+      if (!mounted) return;
+      setState(() => _diagnostics = data);
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) {
+          final cc = LunoteColors.of(ctx);
+          final d = _diagnostics ?? const <String, dynamic>{};
+          return AlertDialog(
+            title: const Text('设备诊断'),
+            content: SizedBox(
+              width: 420,
+              child: SelectableText(
+                '设备：${d['device_name'] ?? '-'}\n'
+                '设备 ID：${d['device_id'] ?? '-'}\n'
+                '监听端口：${d['tcp_port'] ?? '-'}\n'
+                '在线设备：${d['peers_online'] ?? 0}/${d['peers_total'] ?? 0}\n'
+                '数据目录：${d['data_dir'] ?? '-'}\n'
+                '接收目录：${d['downloads_dir'] ?? '-'}\n\n'
+                '发现统计：${d['discovery'] ?? '-'}',
+                style: TextStyle(color: cc.moon, height: 1.55),
+              ),
+            ),
+            actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭'))],
+          );
+        },
+      );
+    } finally {
+      if (mounted) setState(() => _loadingDiagnostics = false);
     }
   }
 
@@ -385,6 +422,25 @@ class _SettingsPageState extends State<SettingsPage> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(18, 10, 18, 24),
             children: [
+              _card(
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.network_check_rounded, size: 15, color: cc.gold),
+                      const SizedBox(width: 6),
+                      Text('设备诊断', style: TextStyle(fontSize: 13, color: cc.moonDim)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text('查看监听端口、在线设备和发现统计，排查网络问题', style: TextStyle(fontSize: 11.5, color: cc.moonDim)),
+                  const SizedBox(height: 10),
+                  SpringButton(
+                    weight: SpringWeight.normal,
+                    onTap: _loadingDiagnostics ? null : _showDiagnostics,
+                    child: _pill(Icons.monitor_heart_rounded, _loadingDiagnostics ? '读取中…' : '查看诊断信息'),
+                  ),
+                ],
+              ),
               _card(
                 children: [
                   Text(

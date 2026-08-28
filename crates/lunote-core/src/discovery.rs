@@ -83,7 +83,7 @@ struct PeerEntry {
     online: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
 pub struct DiscoveryStats {
     pub tx_packets: u64,
     pub tx_failures: u64,
