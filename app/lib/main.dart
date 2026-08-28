@@ -406,7 +406,8 @@ class _LockGateState extends State<_LockGate> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    if (!_locked) return const _Home();
+    final shouldLock = _locked || AppState.instance.pinEnabled;
+    if (!shouldLock) return const _Home();
     return Scaffold(body: Center(child: _checking ? const CircularProgressIndicator() : FilledButton.icon(onPressed: _unlock, icon: const Icon(Icons.lock_open_rounded), label: const Text('解锁月笺'))));
   }
 }
