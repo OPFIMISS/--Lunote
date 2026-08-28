@@ -80,6 +80,7 @@ struct OutgoingState {
     transfer_id: String,
     peer: String,
     file_name: String,
+    #[allow(dead_code)]
     rel_parts: Vec<String>,
     path: PathBuf,
     size: u64,

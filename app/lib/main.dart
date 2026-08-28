@@ -51,6 +51,7 @@ class _LunoteAppState extends State<LunoteApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    AppState.instance.addListener(_onStateChanged);
     _init();
   }
 
@@ -351,7 +352,14 @@ class _LockGateState extends State<_LockGate> with WidgetsBindingObserver {
   }
 
   @override
-  void dispose() { WidgetsBinding.instance.removeObserver(this); super.dispose(); }
+  void dispose() { AppState.instance.removeListener(_onStateChanged); WidgetsBinding.instance.removeObserver(this); super.dispose(); }
+
+  void _onStateChanged() {
+    if (!mounted) return;
+    final enabled = AppState.instance.pinEnabled;
+    if (enabled && !_locked) setState(() => _locked = true);
+    if (!enabled && _locked) setState(() => _locked = false);
+  }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {

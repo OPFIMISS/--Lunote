@@ -79,6 +79,7 @@ struct PeerEntry {
     tcp_port: u16,
     last_seq: u64,
     last_seen: Instant,
+    #[allow(dead_code)]
     first_seen_ms: i64,
     online: bool,
 }
@@ -96,6 +97,7 @@ pub struct DiscoveryStats {
 
 #[derive(Clone, Debug)]
 struct Iface {
+    #[allow(dead_code)]
     name: String,
     ip: Ipv4Addr,
     broadcast: Option<Ipv4Addr>,
@@ -211,11 +213,13 @@ fn now_ms() -> i64 {
 }
 
 struct ParsedBeacon {
+    #[allow(dead_code)]
     ver: u64,
     name: String,
     device_id: String,
     instance_id: String,
     seq: u64,
+    #[allow(dead_code)]
     ts: i64,
     port: u16,
 }

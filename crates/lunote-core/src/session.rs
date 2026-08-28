@@ -640,7 +640,7 @@ impl SessionManager {
         let mut last_rx = Instant::now();
         let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut close_reason: Option<String> = None;
+        let close_reason: Option<String>;
 
         loop {
             let is_current = self
