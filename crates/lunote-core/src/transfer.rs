@@ -33,6 +33,13 @@ use crate::trust::TrustStore;
 pub const CHUNK_SIZE: usize = 256 * 1024;
 pub const WINDOW_CHUNKS: u64 = 16; // 未确认窗口上限（4 MiB）
 pub const ACK_EVERY: u64 = 4;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConflictPolicy {
+    Rename,
+    Overwrite,
+    Skip,
+}
 const ACCEPT_TIMEOUT: Duration = Duration::from_secs(120);
 const ACK_TIMEOUT: Duration = Duration::from_secs(30);
 const CHUNK_HEADER_LEN: usize = 36 + 8 + 8; // transfer_id + offset + seq
@@ -102,6 +109,7 @@ pub struct TransferManager {
     outgoing: Mutex<HashMap<String, OutgoingState>>,
     outgoing_tx: Mutex<HashMap<String, mpsc::Sender<OutgoingMsg>>>,
     outgoing_paused: Mutex<HashMap<String, bool>>,
+    conflict_policy: Mutex<ConflictPolicy>,
 }
 
 impl TransferManager {
@@ -123,7 +131,16 @@ impl TransferManager {
             outgoing: Mutex::new(HashMap::new()),
             outgoing_tx: Mutex::new(HashMap::new()),
             outgoing_paused: Mutex::new(HashMap::new()),
+            conflict_policy: Mutex::new(ConflictPolicy::Rename),
         }))
+    }
+
+    pub fn set_conflict_policy(&self, policy: ConflictPolicy) {
+        *self.conflict_policy.lock().unwrap() = policy;
+    }
+
+    pub fn conflict_policy(&self) -> ConflictPolicy {
+        *self.conflict_policy.lock().unwrap()
     }
 
     pub fn set_session(&self, session: Arc<SessionManager>) {
@@ -898,7 +915,18 @@ impl TransferManager {
                 .dest_dir
                 .clone()
                 .unwrap_or_else(|| self.downloads_dir.clone());
-            let final_path = unique_path(&dir, &st.rel_parts, &st.file_name);
+            let base = dir
+                .join(st.rel_parts.iter().fold(PathBuf::new(), |mut p, part| {
+                    p.push(part);
+                    p
+                }))
+                .join(&st.file_name);
+            let final_path = match self.conflict_policy() {
+                ConflictPolicy::Rename => unique_path(&dir, &st.rel_parts, &st.file_name),
+                ConflictPolicy::Overwrite => base,
+                ConflictPolicy::Skip if base.exists() => return Err(anyhow!("目标文件已存在")),
+                ConflictPolicy::Skip => base,
+            };
             if let Some(parent) = final_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -911,6 +939,9 @@ impl TransferManager {
                 }
                 None => return Err(anyhow!("临时文件路径缺失")),
             };
+            if matches!(self.conflict_policy(), ConflictPolicy::Overwrite) && final_path.exists() {
+                std::fs::remove_file(&final_path).context("覆盖已有文件失败")?;
+            }
             std::fs::rename(&temp_path, &final_path)?;
             Ok(final_path)
         })();

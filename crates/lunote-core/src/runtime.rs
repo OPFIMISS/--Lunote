@@ -15,7 +15,7 @@ use crate::events::{CoreEvent, EventBus};
 use crate::identity::DeviceIdentity;
 use crate::session::SessionManager;
 use crate::store::{ExportReport, ImportReport, Store, StoredConversation};
-use crate::transfer::{SendFile, TransferManager};
+use crate::transfer::{ConflictPolicy, SendFile, TransferManager};
 use crate::trust::{TrustRecord, TrustStore};
 
 #[derive(Clone, Debug)]
@@ -62,6 +62,7 @@ pub struct Runtime {
     pub downloads_dir_setting: Mutex<Option<PathBuf>>,
     /// 主题（"dark"/"light"/"system"；settings.json 持久化，默认 "dark"）
     pub theme_setting: Mutex<String>,
+    pub conflict_setting: Mutex<ConflictPolicy>,
     settings_write_lock: Mutex<()>,
     data_dir: PathBuf,
     rx: broadcast::Receiver<CoreEvent>,
@@ -89,6 +90,7 @@ impl Runtime {
         let mut auto_trust_enabled = true;
         let mut downloads_dir_setting: Option<PathBuf> = None;
         let mut theme_setting = "dark".to_string();
+        let mut conflict_setting = ConflictPolicy::Rename;
         if let Ok(data) = std::fs::read_to_string(cfg.data_dir.join("settings.json")) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
                 if let Some(b) = v.get("auto_trust").and_then(|x| x.as_bool()) {
@@ -103,6 +105,13 @@ impl Runtime {
                     if matches!(t, "dark" | "light" | "system" | "glass") {
                         theme_setting = t.to_string();
                     }
+                }
+                if let Some(c) = v.get("conflict").and_then(|x| x.as_str()) {
+                    conflict_setting = match c {
+                        "overwrite" => ConflictPolicy::Overwrite,
+                        "skip" => ConflictPolicy::Skip,
+                        _ => ConflictPolicy::Rename,
+                    };
                 }
             }
         }
@@ -125,6 +134,7 @@ impl Runtime {
             trust.clone(),
             downloads_dir.clone(),
         )?;
+        transfers.set_conflict_policy(conflict_setting);
         let sessions = SessionManager::new(
             identity.clone(),
             trust.clone(),
@@ -175,6 +185,7 @@ impl Runtime {
             auto_trust,
             downloads_dir_setting,
             theme_setting,
+            conflict_setting: Mutex::new(conflict_setting),
             settings_write_lock: Mutex::new(()),
             data_dir: cfg.data_dir,
             rx,
@@ -299,6 +310,17 @@ impl Runtime {
         self.transfers.resume_transfer(transfer_id).await
     }
 
+    pub fn set_conflict_policy(&self, policy: &str) -> Result<()> {
+        let p = match policy {
+            "overwrite" => ConflictPolicy::Overwrite,
+            "skip" => ConflictPolicy::Skip,
+            _ => ConflictPolicy::Rename,
+        };
+        self.transfers.set_conflict_policy(p);
+        *self.conflict_setting.lock().unwrap() = p;
+        self.write_settings(serde_json::json!({"conflict": policy}))
+    }
+
     pub fn transfers(&self) -> Vec<crate::events::TransferInfo> {
         self.transfers.list()
     }
@@ -352,6 +374,7 @@ impl Runtime {
             "auto_trust": self.auto_trust_enabled(),
             "downloads_dir": self.downloads_dir_setting.lock().unwrap().as_ref().map(|p| p.to_string_lossy().to_string()),
             "theme": self.theme_setting.lock().unwrap().clone(),
+            "conflict": match *self.conflict_setting.lock().unwrap() { ConflictPolicy::Rename => "rename", ConflictPolicy::Overwrite => "overwrite", ConflictPolicy::Skip => "skip" },
         })
     }
 
@@ -363,6 +386,7 @@ impl Runtime {
             "auto_trust": self.auto_trust_enabled(),
             "downloads_dir": self.downloads_dir_setting.lock().unwrap().as_ref().map(|p| p.to_string_lossy().to_string()),
             "theme": self.theme_setting.lock().unwrap().clone(),
+            "conflict": match *self.conflict_setting.lock().unwrap() { ConflictPolicy::Rename => "rename", ConflictPolicy::Overwrite => "overwrite", ConflictPolicy::Skip => "skip" },
         });
         if let Ok(data) = std::fs::read_to_string(&path) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {

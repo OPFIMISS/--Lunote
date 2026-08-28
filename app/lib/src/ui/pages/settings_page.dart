@@ -598,6 +598,33 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   Row(
                     children: [
+                      Icon(Icons.rule_rounded, size: 15, color: cc.gold),
+                      const SizedBox(width: 6),
+                      Text('文件冲突处理', style: TextStyle(fontSize: 13, color: cc.moonDim)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text('接收同名文件时的默认行为，双端同步保存', style: TextStyle(fontSize: 11.5, color: cc.moonDim)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: state.conflictPolicy,
+                    items: const [
+                      DropdownMenuItem(value: 'rename', child: Text('自动重命名（推荐）')),
+                      DropdownMenuItem(value: 'overwrite', child: Text('覆盖已有文件')),
+                      DropdownMenuItem(value: 'skip', child: Text('跳过已有文件')),
+                    ],
+                    onChanged: (v) async {
+                      if (v == null) return;
+                      final error = await state.setConflictPolicy(v);
+                      if (error != null) _toast('保存失败：$error');
+                    },
+                  ),
+                ],
+              ),
+              _card(
+                children: [
+                  Row(
+                    children: [
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
