@@ -1,6 +1,4 @@
-# 月笺 Lunote 1.2.0（历史记录）
-
-> 当前发布版本为 1.3.0，请查看 `RELEASE_NOTES_1.3.0.md`。
+# 月笺 Lunote 1.3.0
 
 ## 重点更新
 
@@ -14,10 +12,10 @@
 ## 验证
 
 - Rust：22 个单元测试、8 个端到端测试全部通过。
-- Flutter：`flutter analyze --no-pub` 无问题。
+- Flutter：flutter analyze --no-pub 无问题。
 - Android：已在雷电模拟器通过覆盖安装。
-- APK SHA-256：`7A90FA7D906EDD2D2333E805B275F47DDAFFB3989C43EB67C72F88658AC52D70`
+- APK SHA-256：7A90FA7D906EDD2D2333E805B275F47DDAFFB3989C43EB67C72F88658AC52D70
 
 ## 安装
 
-下载 `月笺.apk`，保持原 applicationId 与签名即可覆盖更新。
+下载 月笺.apk，保持原 applicationId 与签名即可覆盖更新。

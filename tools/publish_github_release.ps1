@@ -1,12 +1,12 @@
 param(
-    [string]$Tag = "v1.2.0",
+    [string]$Tag = "v1.3.0",
     [string]$Repository = "OPFIMISS/--Lunote"
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $apk = Join-Path $root 'dist\月笺.apk'
-$notes = Join-Path $root 'RELEASE_NOTES_1.2.0.md'
+$notes = Join-Path $root 'RELEASE_NOTES_1.3.0.md'
 
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     throw 'GitHub CLI gh is required. Install gh and run gh auth login first.'

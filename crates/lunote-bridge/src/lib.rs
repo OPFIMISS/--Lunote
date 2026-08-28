@@ -507,6 +507,13 @@ mod tests {
             true
         );
         assert_eq!(call(first, r#"{"cmd":"set_pin","pin":"1234"}"#)["ok"], true);
+        assert_eq!(
+            call(
+                first,
+                r#"{"cmd":"set_device_meta","device_id":"peer-1","alias":"客厅电脑","favorite":true}"#
+            )["ok"],
+            true
+        );
         lunote_destroy(first);
 
         let second = create(&cfg);
@@ -520,6 +527,14 @@ mod tests {
             "content://tree/test"
         );
         assert_eq!(settings["settings"]["pin_enabled"], true);
+        assert_eq!(
+            settings["settings"]["device_meta"]["peer-1"]["alias"],
+            "客厅电脑"
+        );
+        assert_eq!(
+            settings["settings"]["device_meta"]["peer-1"]["favorite"],
+            true
+        );
         assert_eq!(
             call(second, r#"{"cmd":"verify_pin","pin":"1234"}"#)["valid"],
             true
