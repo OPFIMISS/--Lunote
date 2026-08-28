@@ -201,8 +201,15 @@ class _TransfersPageState extends State<TransfersPage> {
                             onAccept: () async {
                               String dir;
                               final configured = state.defaultDownloadDir;
-                              if (configured != null && configured.isNotEmpty) {
+                              if (Platform.isAndroid && state.receiveTreeUri != null) {
+                                // SAF URI is exported after completion; receive into a private path first.
+                                dir = await state.resolvedDownloadDir() ?? '';
+                                if (dir.isEmpty) return;
+                              } else if (configured != null && configured.isNotEmpty) {
                                 dir = configured;
+                              } else if (Platform.isAndroid) {
+                                dir = await state.resolvedDownloadDir() ?? '';
+                                if (dir.isEmpty) return;
                               } else {
                                 final picked = await getDirectoryPath();
                                 if (picked == null) return;
