@@ -438,10 +438,11 @@ class _SettingsPageState extends State<SettingsPage> {
                     SpringButton(
                       weight: SpringWeight.normal,
                       onTap: () async {
+                        final state = context.read<AppState>();
                         final pin = await _askPassword('设置应用锁', '输入 4-12 位 PIN');
                         if (!mounted) return;
                         if (pin == null || pin.length < 4) { if (pin != null) _toast('PIN 至少 4 位'); return; }
-                        final err = await context.read<AppState>().setPin(pin);
+                        final err = await state.setPin(pin);
                         if (!mounted) return;
                         _toast(err ?? '应用锁已开启');
                       },
