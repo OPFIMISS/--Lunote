@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import '../core/core_client.dart';
 import '../core/models.dart';
@@ -338,12 +339,33 @@ class AppState extends ChangeNotifier {
         final t = TransferItem.fromJson(e);
         _hiddenConversationIds.remove(t.peerDeviceId);
         _upsertTransfer(t);
+        if (t.state == 'done' || t.state == 'failed' || t.isOffered) {
+          unawaited(_notifyTransfer(t));
+        }
       case 'trust_changed':
         unawaited(refreshTrusted());
       case 'records_changed':
         unawaited(refreshConversations());
     }
     notifyListeners();
+  }
+
+  Future<void> _notifyTransfer(TransferItem t) async {
+    if (!Platform.isAndroid) return;
+    try {
+      final title = t.isOffered
+          ? '收到文件：${t.fileName}'
+          : (t.isDone ? '传输完成：${t.fileName}' : '传输失败：${t.fileName}');
+      final body = t.isOffered
+          ? '打开月笺以选择接收目录'
+          : (t.isDone ? '文件校验通过' : (t.error ?? '可重试传输'));
+      await const MethodChannel('com.lunote.lunote_app/platform').invokeMethod(
+        'notifyTransfer',
+        {'title': title, 'body': body},
+      );
+    } catch (_) {
+      // 通知不可用不影响传输本身。
+    }
   }
 
   void _upsertPeer(PeerInfo p) {

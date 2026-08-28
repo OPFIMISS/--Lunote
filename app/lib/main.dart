@@ -113,6 +113,14 @@ class _LunoteAppState extends State<LunoteApp> with WidgetsBindingObserver {
         await state.renameDevice(detectedName);
       }
       if (mounted) setState(() {});
+      if (Platform.isAndroid) {
+        try {
+          await const MethodChannel('com.lunote.lunote_app/platform')
+              .invokeMethod('requestNotificationPermission');
+        } catch (_) {
+          // 通知权限不是核心功能，拒绝时继续正常运行。
+        }
+      }
       if (!Platform.isAndroid && !Platform.isIOS) {
         // 窗口/托盘设置失败只记录日志并降级，不阻塞应用使用
         try {

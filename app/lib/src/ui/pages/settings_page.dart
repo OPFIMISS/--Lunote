@@ -661,7 +661,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   Text('关于', style: TextStyle(fontSize: 13, color: cc.moonDim)),
                   const SizedBox(height: 8),
                   Text(
-                    '月笺 Lunote v1.0.0\n无云端 · 无账号 · 无互联网依赖\n数据只在你和设备之间直接传输',
+                    '月笺 Lunote v1.1.0\n无云端 · 无账号 · 无互联网依赖\n数据只在你和设备之间直接传输',
                     style: TextStyle(
                       fontSize: 12.5,
                       height: 1.6,

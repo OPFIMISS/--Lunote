@@ -9,6 +9,8 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.DocumentsContract
 import androidx.core.content.FileProvider
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -26,6 +28,7 @@ class MainActivity : FlutterActivity() {
     private var pendingIntent: Intent? = null
     private var pendingFolderResult: MethodChannel.Result? = null
     private val folderRequestCode = 4207
+    private val transferChannelId = "lunote_transfers"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -36,6 +39,22 @@ class MainActivity : FlutterActivity() {
             val path = call.argument<String>("path").orEmpty()
             when (call.method) {
                 "getDeviceModel" -> result.success(deviceModel())
+                "notifyTransfer" -> {
+                    notifyTransfer(
+                        call.argument<String>("title") ?: "月笺传输",
+                        call.argument<String>("body") ?: "",
+                    )
+                    result.success(true)
+                }
+                "requestNotificationPermission" -> {
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        checkSelfPermission("android.permission.POST_NOTIFICATIONS") !=
+                            android.content.pm.PackageManager.PERMISSION_GRANTED
+                    ) {
+                        requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 9301)
+                    }
+                    result.success(true)
+                }
                 "openDirectory" -> result.success(openDirectory(path))
                 "openFile" -> result.success(openFile(path))
                 "getPendingShare" -> result.success(readShareIntent(pendingIntent ?: intent).also { pendingIntent = null })
@@ -257,7 +276,34 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        createTransferNotificationChannel()
         acquireMulticastLock()
+    }
+
+    private fun createTransferNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val channel = android.app.NotificationChannel(
+            transferChannelId,
+            "文件传输",
+            android.app.NotificationManager.IMPORTANCE_DEFAULT,
+        ).apply { description = "月笺文件传输状态" }
+        getSystemService(android.app.NotificationManager::class.java)
+            ?.createNotificationChannel(channel)
+    }
+
+    private fun notifyTransfer(title: String, body: String) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission("android.permission.POST_NOTIFICATIONS") !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) return
+        val notification = NotificationCompat.Builder(this, transferChannelId)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        NotificationManagerCompat.from(this).notify((System.currentTimeMillis() % 100000).toInt(), notification)
     }
 
     override fun onResume() {

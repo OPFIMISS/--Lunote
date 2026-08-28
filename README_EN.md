@@ -22,7 +22,7 @@ flutter analyze --no-pub
 flutter build apk --release --no-pub
 ```
 
-The current Android application version is **1.1.0 (2)**. The application id and signing configuration remain unchanged so release APKs can be updated in place.
+The current Android application version is **1.2.0 (3)**. The application id and signing configuration remain unchanged so release APKs can be updated in place.
 
 ## Privacy and security
 
