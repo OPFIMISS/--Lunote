@@ -24,6 +24,7 @@ class AppState extends ChangeNotifier {
   /// 自定义接收文件保存目录（settings.json 持久化；null = 使用默认 data/downloads）
   String? defaultDownloadDir;
   String? receiveTreeUri;
+  bool pinEnabled = false;
 
   /// 主题：dark / light / system（settings.json 持久化）
   String themeMode = 'dark';
@@ -85,6 +86,7 @@ class AppState extends ChangeNotifier {
     final stMap = st2['settings'] as Map<String, dynamic>?;
     defaultDownloadDir = stMap?['downloads_dir'] as String?;
     receiveTreeUri = stMap?['receive_tree_uri'] as String?;
+    pinEnabled = stMap?['pin_enabled'] == true;
     themeMode = stMap?['theme'] as String? ?? 'dark';
     conflictPolicy = stMap?['conflict'] as String? ?? 'rename';
     await refreshTrusted();
@@ -592,6 +594,21 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       return '选择接收目录失败：$e';
     }
+  }
+
+  Future<String?> setPin(String? pin) async {
+    final r = await core.call('set_pin', {'pin': pin});
+    if (r['ok'] == true) {
+      pinEnabled = pin != null && pin.isNotEmpty;
+      notifyListeners();
+      return null;
+    }
+    return r['error'] as String? ?? '设置应用锁失败';
+  }
+
+  Future<bool> verifyPin(String pin) async {
+    final r = await core.call('verify_pin', {'pin': pin});
+    return r['valid'] == true;
   }
 
   Future<void> _exportReceivedToTree(TransferItem t) async {

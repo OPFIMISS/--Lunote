@@ -309,6 +309,15 @@ fn dispatch(runtime: &Runtime, rt: &tokio::runtime::Runtime, cmd_json: &str) -> 
             runtime.set_receive_tree_uri(uri)?;
             ok("")
         }
+        "set_pin" => {
+            let pin = v.get("pin").and_then(|x| x.as_str());
+            runtime.set_pin(pin)?;
+            ok("")
+        }
+        "verify_pin" => {
+            let pin = v.get("pin").and_then(|x| x.as_str()).unwrap_or("");
+            ok(&format!(",\"valid\":{}", runtime.verify_pin(pin)))
+        }
         "set_background" => {
             let bg = v
                 .get("background")

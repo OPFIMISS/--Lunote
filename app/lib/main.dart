@@ -327,8 +327,62 @@ class _AppMaterial extends StatelessWidget {
           ),
         );
       },
-      home: initError != null ? _ErrorView(error: initError!) : const _Home(),
+      home: initError != null ? _ErrorView(error: initError!) : const _LockGate(),
     );
+  }
+}
+
+class _LockGate extends StatefulWidget {
+  const _LockGate();
+  @override State<_LockGate> createState() => _LockGateState();
+}
+
+class _LockGateState extends State<_LockGate> with WidgetsBindingObserver {
+  bool _locked = false;
+  bool _checking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _sync());
+  }
+
+  @override
+  void dispose() { WidgetsBinding.instance.removeObserver(this); super.dispose(); }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused && AppState.instance.pinEnabled) {
+      setState(() => _locked = true);
+    }
+  }
+
+  Future<void> _sync() async {
+    if (AppState.instance.pinEnabled && mounted) setState(() => _locked = true);
+  }
+
+  Future<void> _unlock() async {
+    final ctrl = TextEditingController();
+    final pin = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('应用已锁定'),
+        content: TextField(controller: ctrl, autofocus: true, obscureText: true, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '输入 PIN')),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('解锁'))],
+      ),
+    );
+    if (pin == null) return;
+    setState(() => _checking = true);
+    final ok = await AppState.instance.verifyPin(pin);
+    if (mounted) { setState(() { _checking = false; if (ok) _locked = false; }); if (!ok) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('PIN 不正确'))); }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_locked) return const _Home();
+    return Scaffold(body: Center(child: _checking ? const CircularProgressIndicator() : FilledButton.icon(onPressed: _unlock, icon: const Icon(Icons.lock_open_rounded), label: const Text('解锁月笺'))));
   }
 }
 

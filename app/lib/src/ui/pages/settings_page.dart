@@ -426,6 +426,44 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   Row(
                     children: [
+                      Icon(Icons.lock_rounded, size: 15, color: cc.gold),
+                      const SizedBox(width: 6),
+                      Text('应用锁', style: TextStyle(fontSize: 13, color: cc.moonDim)),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text('后台切换回来时要求 PIN，PIN 仅保存摘要', style: TextStyle(fontSize: 11.5, color: cc.moonDim)),
+                  const SizedBox(height: 10),
+                  Wrap(spacing: 10, children: [
+                    SpringButton(
+                      weight: SpringWeight.normal,
+                      onTap: () async {
+                        final pin = await _askPassword('设置应用锁', '输入 4-12 位 PIN');
+                        if (!mounted) return;
+                        if (pin == null || pin.length < 4) { if (pin != null) _toast('PIN 至少 4 位'); return; }
+                        final err = await context.read<AppState>().setPin(pin);
+                        if (!mounted) return;
+                        _toast(err ?? '应用锁已开启');
+                      },
+                      child: _pill(Icons.lock_open_rounded, '设置 PIN'),
+                    ),
+                    if (context.watch<AppState>().pinEnabled)
+                      SpringButton(
+                        weight: SpringWeight.normal,
+                        onTap: () async {
+                          final err = await context.read<AppState>().setPin(null);
+                          if (!mounted) return;
+                          _toast(err ?? '应用锁已关闭');
+                        },
+                        child: _pill(Icons.lock_reset_rounded, '关闭应用锁'),
+                      ),
+                  ]),
+                ],
+              ),
+              _card(
+                children: [
+                  Row(
+                    children: [
                       Icon(Icons.network_check_rounded, size: 15, color: cc.gold),
                       const SizedBox(width: 6),
                       Text('设备诊断', style: TextStyle(fontSize: 13, color: cc.moonDim)),
@@ -589,7 +627,8 @@ class _SettingsPageState extends State<SettingsPage> {
                           weight: SpringWeight.normal,
                           onTap: () async {
                             final err = await state.pickReceiveFolder();
-                            _toast(err == null ? '已设置 Android 接收目录' : err);
+                            if (!mounted) return;
+                            _toast(err ?? '已设置 Android 接收目录');
                           },
                           child: _pill(Icons.sd_storage_rounded, '选择 Android 目录'),
                         ),

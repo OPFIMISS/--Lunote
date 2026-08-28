@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Context, Result};
+use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 
 use crate::discovery::{Discovery, DiscoveryConfig, PeerAddr};
@@ -65,6 +66,7 @@ pub struct Runtime {
     pub theme_setting: Mutex<String>,
     pub conflict_setting: Mutex<ConflictPolicy>,
     pub receive_tree_uri: Mutex<Option<String>>,
+    pub pin_hash: Mutex<Option<String>>,
     settings_write_lock: Mutex<()>,
     data_dir: PathBuf,
     rx: broadcast::Receiver<CoreEvent>,
@@ -94,6 +96,7 @@ impl Runtime {
         let mut theme_setting = "dark".to_string();
         let mut conflict_setting = ConflictPolicy::Rename;
         let mut receive_tree_uri: Option<String> = None;
+        let mut pin_hash: Option<String> = None;
         if let Ok(data) = std::fs::read_to_string(cfg.data_dir.join("settings.json")) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
                 if let Some(b) = v.get("auto_trust").and_then(|x| x.as_bool()) {
@@ -118,6 +121,10 @@ impl Runtime {
                 }
                 receive_tree_uri = v
                     .get("receive_tree_uri")
+                    .and_then(|x| x.as_str())
+                    .map(str::to_owned);
+                pin_hash = v
+                    .get("pin_hash")
                     .and_then(|x| x.as_str())
                     .map(str::to_owned);
             }
@@ -195,6 +202,7 @@ impl Runtime {
             theme_setting,
             conflict_setting: Mutex::new(conflict_setting),
             receive_tree_uri: Mutex::new(receive_tree_uri),
+            pin_hash: Mutex::new(pin_hash),
             settings_write_lock: Mutex::new(()),
             data_dir: cfg.data_dir,
             rx,
@@ -335,6 +343,23 @@ impl Runtime {
         self.write_settings(serde_json::json!({"receive_tree_uri": uri}))
     }
 
+    pub fn set_pin(&self, pin: Option<&str>) -> Result<()> {
+        let hash = pin.map(|p| {
+            let mut h = Sha256::new();
+            h.update(p.as_bytes());
+            format!("{:x}", h.finalize())
+        });
+        *self.pin_hash.lock().unwrap() = hash.clone();
+        self.write_settings(serde_json::json!({"pin_hash": hash}))
+    }
+
+    pub fn verify_pin(&self, pin: &str) -> bool {
+        let mut h = Sha256::new();
+        h.update(pin.as_bytes());
+        let candidate = format!("{:x}", h.finalize());
+        self.pin_hash.lock().unwrap().as_deref() == Some(candidate.as_str())
+    }
+
     pub fn transfers(&self) -> Vec<crate::events::TransferInfo> {
         self.transfers.list()
     }
@@ -390,6 +415,7 @@ impl Runtime {
             "theme": self.theme_setting.lock().unwrap().clone(),
             "conflict": match *self.conflict_setting.lock().unwrap() { ConflictPolicy::Rename => "rename", ConflictPolicy::Overwrite => "overwrite", ConflictPolicy::Skip => "skip" },
             "receive_tree_uri": self.receive_tree_uri.lock().unwrap().clone(),
+            "pin_enabled": self.pin_hash.lock().unwrap().is_some(),
         })
     }
 
@@ -403,6 +429,7 @@ impl Runtime {
             "theme": self.theme_setting.lock().unwrap().clone(),
             "conflict": match *self.conflict_setting.lock().unwrap() { ConflictPolicy::Rename => "rename", ConflictPolicy::Overwrite => "overwrite", ConflictPolicy::Skip => "skip" },
             "receive_tree_uri": self.receive_tree_uri.lock().unwrap().clone(),
+            "pin_hash": self.pin_hash.lock().unwrap().clone(),
         });
         if let Ok(data) = std::fs::read_to_string(&path) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
