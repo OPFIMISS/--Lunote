@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.DocumentsContract
+import android.app.PendingIntent
 import androidx.core.content.FileProvider
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -335,10 +336,18 @@ class MainActivity : FlutterActivity() {
             checkSelfPermission("android.permission.POST_NOTIFICATIONS") !=
                 android.content.pm.PackageManager.PERMISSION_GRANTED
         ) return
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val contentIntent = PendingIntent.getActivity(
+            this, 9302, openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         val notification = NotificationCompat.Builder(this, transferChannelId)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentTitle(title)
             .setContentText(body)
+            .setContentIntent(contentIntent)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()

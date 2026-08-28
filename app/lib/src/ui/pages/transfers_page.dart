@@ -68,6 +68,9 @@ class _TransfersPageState extends State<TransfersPage> {
       return (_category == TransferCategory.all || _category == category) &&
           _matchesStatus(transfer);
     }).toList();
+    final active = list.where((t) => t.isInProgress || t.isPaused).toList();
+    final totalBytes = active.fold<int>(0, (sum, t) => sum + t.fileSize);
+    final doneBytes = active.fold<int>(0, (sum, t) => sum + t.transferred);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -82,6 +85,22 @@ class _TransfersPageState extends State<TransfersPage> {
             ),
           ),
         ),
+        if (active.length > 1)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(color: cc.nightRaised, borderRadius: BorderRadius.circular(10), border: Border.all(color: cc.nightSoft)),
+              child: Row(
+                children: [
+                  Expanded(child: Text('任务组 · ${active.length} 个文件 · ${_size(totalBytes)} · ${totalBytes == 0 ? 0 : (doneBytes * 100 / totalBytes).round()}%', style: TextStyle(fontSize: 11.5, color: cc.moon))),
+                  IconButton(tooltip: '暂停全部', onPressed: () async { final e = await state.pauseTransfers(active.where((t) => t.isInProgress).map((t) => t.transferId)); if (e != null && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e))); }, icon: const Icon(Icons.pause_circle_outline_rounded, size: 20)),
+                  IconButton(tooltip: '继续全部', onPressed: () async { final e = await state.resumeTransfers(active.where((t) => t.isPaused).map((t) => t.transferId)); if (e != null && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e))); }, icon: const Icon(Icons.play_circle_outline_rounded, size: 20)),
+                  IconButton(tooltip: '取消全部', onPressed: () async { final e = await state.cancelTransfers(active.map((t) => t.transferId)); if (e != null && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e))); }, icon: Icon(Icons.stop_circle_outlined, size: 20, color: cc.warn)),
+                ],
+              ),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 4, 24, 12),
           child: Text(
@@ -265,5 +284,12 @@ class _TransfersPageState extends State<TransfersPage> {
         ),
       ],
     );
+  }
+
+  String _size(int bytes) {
+    if (bytes >= 1073741824) return '${(bytes / 1073741824).toStringAsFixed(1)} GB';
+    if (bytes >= 1048576) return '${(bytes / 1048576).toStringAsFixed(1)} MB';
+    if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    return '$bytes B';
   }
 }
