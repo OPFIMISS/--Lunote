@@ -51,7 +51,6 @@ class _LunoteAppState extends State<LunoteApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    AppState.instance.addListener(_onStateChanged);
     _init();
   }
 
@@ -348,6 +347,7 @@ class _LockGateState extends State<_LockGate> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    AppState.instance.addListener(_onStateChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) => _sync());
   }
 
