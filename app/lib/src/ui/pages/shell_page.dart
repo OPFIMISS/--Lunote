@@ -90,6 +90,7 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _handlePendingShare();
+      _handlePendingTransfer();
     }
   }
 
