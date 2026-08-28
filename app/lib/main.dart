@@ -340,6 +340,8 @@ class _LockGate extends StatefulWidget {
 class _LockGateState extends State<_LockGate> with WidgetsBindingObserver {
   bool _locked = false;
   bool _checking = false;
+  int _failedAttempts = 0;
+  DateTime? _lockedUntil;
 
   @override
   void initState() {
@@ -363,6 +365,8 @@ class _LockGateState extends State<_LockGate> with WidgetsBindingObserver {
   }
 
   Future<void> _unlock() async {
+    final until = _lockedUntil;
+    if (until != null && DateTime.now().isBefore(until)) return;
     final ctrl = TextEditingController();
     final pin = await showDialog<String>(
       context: context,
@@ -379,7 +383,17 @@ class _LockGateState extends State<_LockGate> with WidgetsBindingObserver {
     if (pin == null) return;
     setState(() => _checking = true);
     final ok = await AppState.instance.verifyPin(pin);
-    if (mounted) { setState(() { _checking = false; if (ok) _locked = false; }); if (!ok) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('PIN 不正确'))); }
+    if (mounted) {
+      setState(() {
+        _checking = false;
+        if (ok) { _locked = false; _failedAttempts = 0; _lockedUntil = null; }
+        else {
+          _failedAttempts++;
+          if (_failedAttempts >= 5) { _lockedUntil = DateTime.now().add(const Duration(seconds: 30)); _failedAttempts = 0; }
+        }
+      });
+      if (!ok) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_lockedUntil != null ? '尝试次数过多，请 30 秒后再试' : 'PIN 不正确')));
+    }
   }
 
   @override

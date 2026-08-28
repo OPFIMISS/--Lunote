@@ -429,7 +429,7 @@ impl Runtime {
             "theme": self.theme_setting.lock().unwrap().clone(),
             "conflict": match *self.conflict_setting.lock().unwrap() { ConflictPolicy::Rename => "rename", ConflictPolicy::Overwrite => "overwrite", ConflictPolicy::Skip => "skip" },
             "receive_tree_uri": self.receive_tree_uri.lock().unwrap().clone(),
-            "pin_hash": self.pin_hash.lock().unwrap().clone(),
+            "pin_enabled": self.pin_hash.lock().unwrap().is_some(),
         });
         if let Ok(data) = std::fs::read_to_string(&path) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
