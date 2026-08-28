@@ -9,13 +9,13 @@ $apk = Join-Path $root 'dist\月笺.apk'
 $notes = Join-Path $root 'RELEASE_NOTES_1.2.0.md'
 
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-    throw '未找到 GitHub CLI（gh）。请安装 gh 并执行 gh auth login 后重试。'
+    throw 'GitHub CLI gh is required. Install gh and run gh auth login first.'
 }
-if (-not (Test-Path $apk)) { throw "APK 不存在: $apk" }
-if (-not (Test-Path $notes)) { throw "发布说明不存在: $notes" }
+if (-not (Test-Path $apk)) { throw "APK not found: $apk" }
+if (-not (Test-Path $notes)) { throw "Release notes not found: $notes" }
 
 $tagExists = git tag --list $Tag
-if ($tagExists -ne $Tag) { throw "本地 tag 不存在: $Tag" }
+if ($tagExists -ne $Tag) { throw "Local tag not found: $Tag" }
 
 $hash = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash
 $body = Get-Content -LiteralPath $notes -Raw -Encoding UTF8
