@@ -27,6 +27,8 @@ Android / Windows 10+ / Linux，设备直连（E2E），默认加密，本地加
 
 发布页资产由 tools/publish_github_release.ps1 校验并上传。配置 GitHub CLI 后执行 gh auth login，再运行该脚本。
 
+当前正式发布： [v1.3.0 Release](https://github.com/OPFIMISS/--Lunote/releases/tag/v1.3.0)，包含 `Lunote-1.3.0.apk`、Windows 可执行文件和 Windows x64 完整压缩包。
+
 - 项目根目录：`D:\Lunote 2\moonletter`
 - 技术栈：Rust（核心：tokio + rustls 1.3 + Ed25519 + AES-256-GCM）＋ Flutter（UI）
 - 详细说明：`docs/`（计划与架构、协议、安全模型、构建说明、开发路径指南、交付报告）

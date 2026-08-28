@@ -49,3 +49,5 @@ See `docs/协议.md`, `docs/安全模型.md`, and `docs/交付报告.md` for the
 ## Release
 
 Use tools/publish_github_release.ps1 to verify and upload the tagged APK and release notes after running gh auth login.
+
+Current stable release: [v1.3.0](https://github.com/OPFIMISS/--Lunote/releases/tag/v1.3.0), including `Lunote-1.3.0.apk`, the Windows executable, and a complete Windows x64 archive.

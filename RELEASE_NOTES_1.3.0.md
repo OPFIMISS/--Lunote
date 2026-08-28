@@ -18,6 +18,7 @@
 
 - Android 通知新增“接收 / 拒绝”快捷动作：拒绝可直接处理，接收会打开传输中心继续选择目录。
 - 本次重建 APK SHA-256：3B4689E760D6DA19F7D83F44933A96BC6DE5E40B7B593D4740F413451165233B
+- Release 资产同时包含 `Lunote-1.3.0-windows-x64.exe` 和 `Lunote-1.3.0-windows-x64.zip`。
 
 ## 安装
 
