@@ -64,6 +64,7 @@ pub struct Runtime {
     /// 主题（"dark"/"light"/"system"；settings.json 持久化，默认 "dark"）
     pub theme_setting: Mutex<String>,
     pub conflict_setting: Mutex<ConflictPolicy>,
+    pub receive_tree_uri: Mutex<Option<String>>,
     settings_write_lock: Mutex<()>,
     data_dir: PathBuf,
     rx: broadcast::Receiver<CoreEvent>,
@@ -92,6 +93,7 @@ impl Runtime {
         let mut downloads_dir_setting: Option<PathBuf> = None;
         let mut theme_setting = "dark".to_string();
         let mut conflict_setting = ConflictPolicy::Rename;
+        let mut receive_tree_uri: Option<String> = None;
         if let Ok(data) = std::fs::read_to_string(cfg.data_dir.join("settings.json")) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
                 if let Some(b) = v.get("auto_trust").and_then(|x| x.as_bool()) {
@@ -114,6 +116,10 @@ impl Runtime {
                         _ => ConflictPolicy::Rename,
                     };
                 }
+                receive_tree_uri = v
+                    .get("receive_tree_uri")
+                    .and_then(|x| x.as_str())
+                    .map(str::to_owned);
             }
         }
         let auto_trust = Arc::new(AtomicBool::new(auto_trust_enabled));
@@ -188,6 +194,7 @@ impl Runtime {
             downloads_dir_setting,
             theme_setting,
             conflict_setting: Mutex::new(conflict_setting),
+            receive_tree_uri: Mutex::new(receive_tree_uri),
             settings_write_lock: Mutex::new(()),
             data_dir: cfg.data_dir,
             rx,
@@ -323,6 +330,11 @@ impl Runtime {
         self.write_settings(serde_json::json!({"conflict": policy}))
     }
 
+    pub fn set_receive_tree_uri(&self, uri: Option<&str>) -> Result<()> {
+        *self.receive_tree_uri.lock().unwrap() = uri.map(str::to_owned);
+        self.write_settings(serde_json::json!({"receive_tree_uri": uri}))
+    }
+
     pub fn transfers(&self) -> Vec<crate::events::TransferInfo> {
         self.transfers.list()
     }
@@ -377,6 +389,7 @@ impl Runtime {
             "downloads_dir": self.downloads_dir_setting.lock().unwrap().as_ref().map(|p| p.to_string_lossy().to_string()),
             "theme": self.theme_setting.lock().unwrap().clone(),
             "conflict": match *self.conflict_setting.lock().unwrap() { ConflictPolicy::Rename => "rename", ConflictPolicy::Overwrite => "overwrite", ConflictPolicy::Skip => "skip" },
+            "receive_tree_uri": self.receive_tree_uri.lock().unwrap().clone(),
         })
     }
 
@@ -389,6 +402,7 @@ impl Runtime {
             "downloads_dir": self.downloads_dir_setting.lock().unwrap().as_ref().map(|p| p.to_string_lossy().to_string()),
             "theme": self.theme_setting.lock().unwrap().clone(),
             "conflict": match *self.conflict_setting.lock().unwrap() { ConflictPolicy::Rename => "rename", ConflictPolicy::Overwrite => "overwrite", ConflictPolicy::Skip => "skip" },
+            "receive_tree_uri": self.receive_tree_uri.lock().unwrap().clone(),
         });
         if let Ok(data) = std::fs::read_to_string(&path) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {

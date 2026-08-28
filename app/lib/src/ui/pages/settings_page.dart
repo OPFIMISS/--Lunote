@@ -584,6 +584,15 @@ class _SettingsPageState extends State<SettingsPage> {
                         onTap: _openReceiveDirectory,
                         child: _pill(Icons.folder_open_rounded, '打开目录'),
                       ),
+                      if (Platform.isAndroid)
+                        SpringButton(
+                          weight: SpringWeight.normal,
+                          onTap: () async {
+                            final err = await state.pickReceiveFolder();
+                            _toast(err == null ? '已设置 Android 接收目录' : err);
+                          },
+                          child: _pill(Icons.sd_storage_rounded, '选择 Android 目录'),
+                        ),
                       if (state.defaultDownloadDir != null)
                         SpringButton(
                           weight: SpringWeight.normal,

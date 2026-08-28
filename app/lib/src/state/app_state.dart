@@ -23,6 +23,7 @@ class AppState extends ChangeNotifier {
 
   /// 自定义接收文件保存目录（settings.json 持久化；null = 使用默认 data/downloads）
   String? defaultDownloadDir;
+  String? receiveTreeUri;
 
   /// 主题：dark / light / system（settings.json 持久化）
   String themeMode = 'dark';
@@ -83,6 +84,7 @@ class AppState extends ChangeNotifier {
     final st2 = await core.call('settings');
     final stMap = st2['settings'] as Map<String, dynamic>?;
     defaultDownloadDir = stMap?['downloads_dir'] as String?;
+    receiveTreeUri = stMap?['receive_tree_uri'] as String?;
     themeMode = stMap?['theme'] as String? ?? 'dark';
     conflictPolicy = stMap?['conflict'] as String? ?? 'rename';
     await refreshTrusted();
@@ -341,6 +343,9 @@ class AppState extends ChangeNotifier {
         final t = TransferItem.fromJson(e);
         _hiddenConversationIds.remove(t.peerDeviceId);
         _upsertTransfer(t);
+        if (t.isDone && receiveTreeUri != null && t.localPath != null) {
+          unawaited(_exportReceivedToTree(t));
+        }
         if (t.state == 'done' || t.state == 'failed' || t.isOffered) {
           unawaited(_notifyTransfer(t));
         }
@@ -572,6 +577,29 @@ class AppState extends ChangeNotifier {
       return null;
     }
     return r['error'] as String? ?? '设置失败';
+  }
+
+  Future<String?> pickReceiveFolder() async {
+    if (!Platform.isAndroid) return '仅 Android 支持 SAF 接收目录';
+    try {
+      final uri = await const MethodChannel('com.lunote.lunote_app/platform')
+          .invokeMethod<String>('pickReceiveFolder');
+      if (uri == null || uri.isEmpty) return '未选择目录';
+      receiveTreeUri = uri;
+      await core.call('set_receive_tree_uri', {'uri': uri});
+      notifyListeners();
+      return null;
+    } catch (e) {
+      return '选择接收目录失败：$e';
+    }
+  }
+
+  Future<void> _exportReceivedToTree(TransferItem t) async {
+    try {
+      await const MethodChannel('com.lunote.lunote_app/platform').invokeMethod(
+        'exportToTree', {'path': t.localPath, 'treeUri': receiveTreeUri},
+      );
+    } catch (_) {}
   }
 
   /// 设置主题：dark / light / system（核心持久化）

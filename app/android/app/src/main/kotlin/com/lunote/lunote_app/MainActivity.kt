@@ -27,7 +27,9 @@ class MainActivity : FlutterActivity() {
     private var multicastLock: WifiManager.MulticastLock? = null
     private var pendingIntent: Intent? = null
     private var pendingFolderResult: MethodChannel.Result? = null
+    private var pendingReceiveFolderResult: MethodChannel.Result? = null
     private val folderRequestCode = 4207
+    private val receiveFolderRequestCode = 4208
     private val transferChannelId = "lunote_transfers"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -59,6 +61,8 @@ class MainActivity : FlutterActivity() {
                 "openFile" -> result.success(openFile(path))
                 "getPendingShare" -> result.success(readShareIntent(pendingIntent ?: intent).also { pendingIntent = null })
                 "pickFolderForTransfer" -> pickFolderForTransfer(result)
+                "pickReceiveFolder" -> pickReceiveFolder(result)
+                "exportToTree" -> result.success(exportToTree(path, call.argument<String>("treeUri")))
                 else -> result.notImplemented()
             }
         }
@@ -144,8 +148,27 @@ class MainActivity : FlutterActivity() {
         startActivityForResult(intent, folderRequestCode)
     }
 
+    private fun pickReceiveFolder(result: MethodChannel.Result) {
+        if (pendingReceiveFolderResult != null) { result.error("BUSY", "已有目录选择正在进行", null); return }
+        pendingReceiveFolderResult = result
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            putExtra("android.content.extra.SHOW_ADVANCED", true)
+        }
+        startActivityForResult(intent, receiveFolderRequestCode)
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == receiveFolderRequestCode) {
+            val result = pendingReceiveFolderResult ?: return
+            pendingReceiveFolderResult = null
+            if (resultCode != RESULT_OK || data?.data == null) { result.success(null); return }
+            val uri = data.data!!
+            try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } catch (_: Exception) { }
+            result.success(uri.toString())
+            return
+        }
         if (requestCode != folderRequestCode) return
         val result = pendingFolderResult ?: return
         pendingFolderResult = null
@@ -161,6 +184,21 @@ class MainActivity : FlutterActivity() {
             val copied = copyTree(uri)
             runOnUiThread { result.success(copied) }
         }.start()
+    }
+
+    private fun exportToTree(path: String, treeUriString: String?): Boolean {
+        if (treeUriString.isNullOrBlank()) return false
+        return try {
+            val tree = Uri.parse(treeUriString)
+            val name = java.io.File(path).name
+            val doc = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+            val target = DocumentsContract.createDocument(contentResolver, doc, "application/octet-stream", name) ?: return false
+            contentResolver.openOutputStream(target)?.use { out -> java.io.File(path).inputStream().use { it.copyTo(out) } } ?: return false
+            true
+        } catch (e: Exception) {
+            android.util.Log.w("Lunote", "导出到 SAF 目录失败: ${e.message}")
+            false
+        }
     }
 
     private fun copyTree(tree: Uri): String? {

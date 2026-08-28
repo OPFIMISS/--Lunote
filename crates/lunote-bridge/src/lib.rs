@@ -304,6 +304,11 @@ fn dispatch(runtime: &Runtime, rt: &tokio::runtime::Runtime, cmd_json: &str) -> 
             runtime.set_conflict_policy(policy)?;
             ok("")
         }
+        "set_receive_tree_uri" => {
+            let uri = v.get("uri").and_then(|x| x.as_str());
+            runtime.set_receive_tree_uri(uri)?;
+            ok("")
+        }
         "set_background" => {
             let bg = v
                 .get("background")
