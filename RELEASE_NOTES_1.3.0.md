@@ -16,6 +16,9 @@
 - Android：已在雷电模拟器通过覆盖安装。
 - APK SHA-256：7A90FA7D906EDD2D2333E805B275F47DDAFFB3989C43EB67C72F88658AC52D70
 
+- Android 通知新增“接收 / 拒绝”快捷动作：拒绝可直接处理，接收会打开传输中心继续选择目录。
+- 本次重建 APK SHA-256：3B4689E760D6DA19F7D83F44933A96BC6DE5E40B7B593D4740F413451165233B
+
 ## 安装
 
 下载 月笺.apk，保持原 applicationId 与签名即可覆盖更新。
