@@ -28,6 +28,7 @@ class MainActivity : FlutterActivity() {
     private var multicastLock: WifiManager.MulticastLock? = null
     private var pendingIntent: Intent? = null
     private var pendingTransferId: String? = null
+    private var pendingTransferAction: String? = null
     private var pendingFolderResult: MethodChannel.Result? = null
     private var pendingReceiveFolderResult: MethodChannel.Result? = null
     private val folderRequestCode = 4207
@@ -64,6 +65,7 @@ class MainActivity : FlutterActivity() {
                 "openFile" -> result.success(openFile(path))
                 "getPendingShare" -> result.success(readShareIntent(pendingIntent ?: intent).also { pendingIntent = null })
                 "getPendingTransferId" -> result.success(pendingTransferId.also { pendingTransferId = null })
+                "getPendingTransferAction" -> result.success(pendingTransferAction.also { pendingTransferAction = null })
                 "pickFolderForTransfer" -> pickFolderForTransfer(result)
                 "pickReceiveFolder" -> pickReceiveFolder(result)
                 "exportToTree" -> result.success(exportToTree(path, call.argument<String>("treeUri")))
@@ -72,6 +74,7 @@ class MainActivity : FlutterActivity() {
         }
         pendingIntent = intent
         pendingTransferId = intent.getStringExtra("transfer_id")
+        pendingTransferAction = intent.getStringExtra("transfer_action")
     }
 
     private fun deviceModel(): String {
@@ -88,6 +91,7 @@ class MainActivity : FlutterActivity() {
         setIntent(intent)
         pendingIntent = intent
         pendingTransferId = intent.getStringExtra("transfer_id")
+        pendingTransferAction = intent.getStringExtra("transfer_action")
     }
 
     private fun readShareIntent(source: Intent): Map<String, Any?>? {
@@ -349,14 +353,37 @@ class MainActivity : FlutterActivity() {
             this, 9302, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val notification = NotificationCompat.Builder(this, transferChannelId)
+        val builder = NotificationCompat.Builder(this, transferChannelId)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentTitle(title)
             .setContentText(body)
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .build()
+        if (!transferId.isNullOrBlank() && title.startsWith("收到文件")) {
+            val baseCode = transferId.hashCode() and 0x7fffffff
+            val acceptIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("transfer_id", transferId)
+                putExtra("transfer_action", "accept")
+            }
+            val rejectIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("transfer_id", transferId)
+                putExtra("transfer_action", "reject")
+            }
+            val acceptPending = PendingIntent.getActivity(
+                this, baseCode + 1, acceptIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val rejectPending = PendingIntent.getActivity(
+                this, baseCode + 2, rejectIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            builder.addAction(NotificationCompat.Action(android.R.drawable.ic_input_add, "接收", acceptPending))
+            builder.addAction(NotificationCompat.Action(android.R.drawable.ic_delete, "拒绝", rejectPending))
+        }
+        val notification = builder.build()
         NotificationManagerCompat.from(this).notify((System.currentTimeMillis() % 100000).toInt(), notification)
     }
 

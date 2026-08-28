@@ -73,8 +73,15 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
     try {
       const channel = MethodChannel('com.lunote.lunote_app/platform');
       final id = await channel.invokeMethod<String>('getPendingTransferId');
+      final action = await channel.invokeMethod<String>('getPendingTransferAction');
       if (!mounted || id == null || id.isEmpty) return;
       setState(() => _nav = _Nav.transfers);
+      if (action == 'reject') {
+        final error = await context.read<AppState>().rejectTransfer(id, '通过通知拒绝');
+        if (error != null && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+        }
+      }
     } on MissingPluginException {
       // Desktop does not provide Android notification actions.
     } catch (_) {}
