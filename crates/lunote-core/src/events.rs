@@ -26,6 +26,7 @@ pub enum TransferState {
     Offered,    // 对方发来文件提议，等待用户确认
     Accepted,   // 已确认/已接受
     InProgress, // 传输中
+    Paused,     // 用户暂停，保留断点状态
     Done,       // 完成（含完整性校验通过）
     Failed,     // 失败（可重试/续传）
     Canceled,   // 用户或对端取消

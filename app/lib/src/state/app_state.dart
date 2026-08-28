@@ -532,6 +532,16 @@ class AppState extends ChangeNotifier {
     return r['ok'] == true ? null : (r['error'] as String? ?? '取消失败');
   }
 
+  Future<String?> pauseTransfer(String transferId) async {
+    final r = await core.call('pause', {'transfer_id': transferId});
+    return r['ok'] == true ? null : (r['error'] as String? ?? '暂停失败');
+  }
+
+  Future<String?> resumeTransfer(String transferId) async {
+    final r = await core.call('resume', {'transfer_id': transferId});
+    return r['ok'] == true ? null : (r['error'] as String? ?? '继续失败');
+  }
+
   Future<String?> renameDevice(String name) async {
     final r = await core.call('rename', {'name': name});
     if (r['ok'] == true) {

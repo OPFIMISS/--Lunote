@@ -120,6 +120,7 @@ class TransferItem {
   bool get isCanceled => state == 'canceled';
   bool get isOffered => state == 'offered';
   bool get isInProgress => state == 'in_progress' || state == 'accepted';
+  bool get isPaused => state == 'paused';
 
   double get progress =>
       fileSize <= 0 ? 0 : (transferred / fileSize).clamp(0.0, 1.0);

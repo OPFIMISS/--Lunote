@@ -683,3 +683,94 @@ async fn export_import_across_instances() {
     b.stop();
     c.stop();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pause_and_resume_transfer() {
+    init_tracing();
+    let da = tempfile::tempdir().unwrap();
+    let db = tempfile::tempdir().unwrap();
+    let a = Runtime::start(cfg(da.path(), "暂停甲", 45471))
+        .await
+        .unwrap();
+    let b = Runtime::start(cfg(db.path(), "暂停乙", 45472))
+        .await
+        .unwrap();
+    wait_discovered(&a, &b, 12).await;
+    a.connect_to(&b.identity.device_id).await.unwrap();
+    trust_both(&a, &b);
+    let src = da.path().join("pause.bin");
+    std::fs::write(&src, rand_bytes(32 * 1024 * 1024)).unwrap();
+    let dest = db.path().join("接收");
+    let tid = a
+        .send_paths(&b.identity.device_id, vec![src])
+        .await
+        .unwrap()[0]
+        .clone();
+    let mut rx = b.events();
+    wait_for(
+        &mut rx,
+        |e| match e {
+            CoreEvent::TransferUpdate(t)
+                if t.transfer_id == tid && t.state == TransferState::Offered =>
+            {
+                Some(())
+            }
+            _ => None,
+        },
+        15,
+    )
+    .await
+    .expect("未收到暂停测试提议");
+    b.accept_transfer(&tid, &dest).await.unwrap();
+    let mut arx = a.events();
+    wait_for(
+        &mut arx,
+        |e| match e {
+            CoreEvent::TransferUpdate(t)
+                if t.transfer_id == tid && t.state == TransferState::InProgress =>
+            {
+                Some(())
+            }
+            _ => None,
+        },
+        15,
+    )
+    .await
+    .expect("暂停测试未开始");
+    a.pause_transfer(&tid).await.unwrap();
+    wait_for(
+        &mut arx,
+        |e| match e {
+            CoreEvent::TransferUpdate(t)
+                if t.transfer_id == tid && t.state == TransferState::Paused =>
+            {
+                Some(())
+            }
+            _ => None,
+        },
+        10,
+    )
+    .await
+    .expect("未收到暂停状态");
+    a.resume_transfer(&tid).await.unwrap();
+    wait_for(
+        &mut rx,
+        |e| match e {
+            CoreEvent::TransferUpdate(t)
+                if t.transfer_id == tid && t.state == TransferState::Done =>
+            {
+                Some(())
+            }
+            _ => None,
+        },
+        90,
+    )
+    .await
+    .expect("继续后传输未完成");
+    assert_eq!(
+        std::fs::read(dest.join("pause.bin")).unwrap().len(),
+        32 * 1024 * 1024
+    );
+    a.stop();
+    b.stop();
+}

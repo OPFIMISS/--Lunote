@@ -233,6 +233,14 @@ fn dispatch(runtime: &Runtime, rt: &tokio::runtime::Runtime, cmd_json: &str) -> 
             rt.block_on(runtime.cancel_transfer(&s("transfer_id")))?;
             ok("")
         }
+        "pause" => {
+            rt.block_on(runtime.pause_transfer(&s("transfer_id")))?;
+            ok("")
+        }
+        "resume" => {
+            rt.block_on(runtime.resume_transfer(&s("transfer_id")))?;
+            ok("")
+        }
         "export" => {
             let report = runtime.export_records(&s("password"), &PathBuf::from(s("out")))?;
             ok(&format!(

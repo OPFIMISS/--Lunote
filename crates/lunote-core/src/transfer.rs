@@ -101,6 +101,7 @@ pub struct TransferManager {
     incoming: Mutex<HashMap<String, IncomingState>>,
     outgoing: Mutex<HashMap<String, OutgoingState>>,
     outgoing_tx: Mutex<HashMap<String, mpsc::Sender<OutgoingMsg>>>,
+    outgoing_paused: Mutex<HashMap<String, bool>>,
 }
 
 impl TransferManager {
@@ -121,6 +122,7 @@ impl TransferManager {
             incoming: Mutex::new(HashMap::new()),
             outgoing: Mutex::new(HashMap::new()),
             outgoing_tx: Mutex::new(HashMap::new()),
+            outgoing_paused: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -285,6 +287,28 @@ impl TransferManager {
         }))
         .await
         .map_err(|_| anyhow!("发送任务已结束"))?;
+        Ok(())
+    }
+
+    pub async fn pause_transfer(&self, transfer_id: &str) -> Result<()> {
+        if !self.outgoing_tx.lock().unwrap().contains_key(transfer_id) {
+            bail!("传输不存在或已结束");
+        }
+        self.outgoing_paused
+            .lock()
+            .unwrap()
+            .insert(transfer_id.to_string(), true);
+        Ok(())
+    }
+
+    pub async fn resume_transfer(&self, transfer_id: &str) -> Result<()> {
+        if !self.outgoing_tx.lock().unwrap().contains_key(transfer_id) {
+            bail!("传输不存在或已结束");
+        }
+        self.outgoing_paused
+            .lock()
+            .unwrap()
+            .insert(transfer_id.to_string(), false);
         Ok(())
     }
 
@@ -1209,6 +1233,29 @@ impl TransferManager {
                     let mut buf = vec![0u8; CHUNK_SIZE];
                     let mut eof = prefix_failed; // 前缀读取失败则不再发送任何分块
                     while !eof {
+                        let is_paused = self
+                            .outgoing_paused
+                            .lock()
+                            .unwrap()
+                            .get(&transfer_id)
+                            .copied()
+                            .unwrap_or(false);
+                        if is_paused {
+                            if let Some(s) = self.outgoing.lock().unwrap().get_mut(&transfer_id) {
+                                if s.state != TransferState::Paused {
+                                    s.state = TransferState::Paused;
+                                    self.emit_update(s.into_info());
+                                }
+                            }
+                            tokio::time::sleep(Duration::from_millis(120)).await;
+                            continue;
+                        } else if let Some(s) = self.outgoing.lock().unwrap().get_mut(&transfer_id)
+                        {
+                            if s.state == TransferState::Paused {
+                                s.state = TransferState::InProgress;
+                                self.emit_update(s.into_info());
+                            }
+                        }
                         while in_flight < WINDOW_CHUNKS && !eof {
                             let n = match fh.read(&mut buf).await {
                                 Ok(n) => n,
@@ -1369,6 +1416,7 @@ impl TransferManager {
         }
         // 清理
         self.outgoing_tx.lock().unwrap().remove(&transfer_id);
+        self.outgoing_paused.lock().unwrap().remove(&transfer_id);
     }
 
     async fn finish_outgoing(

@@ -19,6 +19,8 @@ class TransferTile extends StatelessWidget {
     required this.onReject,
     required this.onCancel,
     required this.onRetry,
+    this.onPause,
+    this.onResume,
     this.onOpen,
     this.onOpenFolder,
     this.onPreview,
@@ -30,6 +32,8 @@ class TransferTile extends StatelessWidget {
   final VoidCallback onReject;
   final VoidCallback onCancel;
   final VoidCallback onRetry;
+  final VoidCallback? onPause;
+  final VoidCallback? onResume;
   final VoidCallback? onOpen;
   final VoidCallback? onOpenFolder;
   final VoidCallback? onPreview;
@@ -43,6 +47,8 @@ class TransferTile extends StatelessWidget {
         return '已接受';
       case 'in_progress':
         return '传输中';
+      case 'paused':
+        return '已暂停';
       case 'done':
         return '已完成 · 校验通过';
       case 'failed':
@@ -161,7 +167,7 @@ class TransferTile extends StatelessWidget {
               child: ImageThumbnail(path: t.localPath!, onTap: onPreview),
             ),
           ],
-          if (t.isInProgress || t.state == 'done') ...[
+          if (t.isInProgress || t.isPaused || t.state == 'done') ...[
             const SizedBox(height: 10),
             _TransferProgress(transfer: t, colors: cc),
           ],
@@ -222,6 +228,7 @@ class TransferTile extends StatelessWidget {
   bool get _hasActions =>
       transfer.isOffered ||
       transfer.isInProgress ||
+      transfer.isPaused ||
       (transfer.isFailed && transfer.isOutgoing) ||
       (transfer.isDone && (onOpen != null || onOpenFolder != null));
 
@@ -254,6 +261,13 @@ class TransferTile extends StatelessWidget {
       actions.add(_button(cc, Icons.close_rounded, '取消发送', onCancel));
     }
     if (transfer.isInProgress) {
+      if (onPause != null) {
+        actions.add(_button(cc, Icons.pause_rounded, '暂停', onPause!));
+      }
+      actions.add(_button(cc, Icons.stop_rounded, '取消', onCancel));
+    }
+    if (transfer.isPaused && onResume != null) {
+      actions.add(_button(cc, Icons.play_arrow_rounded, '继续', onResume!, primary: true));
       actions.add(_button(cc, Icons.stop_rounded, '取消', onCancel));
     }
     if (transfer.isFailed && transfer.isOutgoing) {

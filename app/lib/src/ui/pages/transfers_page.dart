@@ -51,7 +51,7 @@ class _TransfersPageState extends State<TransfersPage> {
   }
 
   bool _matchesStatus(TransferItem transfer) => switch (_status) {
-    'active' => transfer.isOffered || transfer.isInProgress,
+    'active' => transfer.isOffered || transfer.isInProgress || transfer.isPaused,
     'done' => transfer.isDone,
     'failed' =>
       transfer.isFailed || transfer.isCanceled || transfer.state == 'rejected',
@@ -217,6 +217,22 @@ class _TransfersPageState extends State<TransfersPage> {
                                     .showSnackBar(SnackBar(content: Text(err)));
                               }
                             },
+                            onPause: t.isInProgress
+                                ? () async {
+                                    final err = await state.pauseTransfer(t.transferId);
+                                    if (err != null && context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+                                    }
+                                  }
+                                : null,
+                            onResume: t.isPaused
+                                ? () async {
+                                    final err = await state.resumeTransfer(t.transferId);
+                                    if (err != null && context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+                                    }
+                                  }
+                                : null,
                             onRetry: () async {
                               final path =
                                   state.sentPaths[t.transferId] ?? t.localPath;

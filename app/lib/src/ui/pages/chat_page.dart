@@ -414,6 +414,22 @@ class _ChatPageState extends State<ChatPage> {
               .showSnackBar(SnackBar(content: Text(error)));
         }
       },
+      onPause: transfer.isInProgress
+          ? () async {
+              final error = await state.pauseTransfer(transfer.transferId);
+              if (error != null && mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+              }
+            }
+          : null,
+      onResume: transfer.isPaused
+          ? () async {
+              final error = await state.resumeTransfer(transfer.transferId);
+              if (error != null && mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+              }
+            }
+          : null,
       onRetry: () async {
         final path = state.sentPaths[transfer.transferId] ?? transfer.localPath;
         if (path == null) {

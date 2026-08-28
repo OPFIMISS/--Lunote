@@ -291,6 +291,14 @@ impl Runtime {
         self.transfers.cancel_transfer(transfer_id).await
     }
 
+    pub async fn pause_transfer(&self, transfer_id: &str) -> Result<()> {
+        self.transfers.pause_transfer(transfer_id).await
+    }
+
+    pub async fn resume_transfer(&self, transfer_id: &str) -> Result<()> {
+        self.transfers.resume_transfer(transfer_id).await
+    }
+
     pub fn transfers(&self) -> Vec<crate::events::TransferInfo> {
         self.transfers.list()
     }
