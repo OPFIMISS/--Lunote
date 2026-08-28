@@ -146,6 +146,9 @@ class DevicesPage extends StatelessWidget {
     final state = context.watch<AppState>();
     final devices = state.peers.values.toList()
       ..sort((a, b) {
+        final af = state.favoriteDevices.contains(a.deviceId);
+        final bf = state.favoriteDevices.contains(b.deviceId);
+        if (af != bf) return af ? -1 : 1;
         if (a.online != b.online) return a.online ? -1 : 1;
         return a.name.compareTo(b.name);
       });
@@ -238,6 +241,7 @@ class DevicesPage extends StatelessWidget {
                     itemBuilder: (context, i) {
                       final d = devices[i];
                       final trusted = state.isTrusted(d.deviceId);
+                      final favorite = state.favoriteDevices.contains(d.deviceId);
                       final warning = state.identityWarnings[d.deviceId];
                       return GestureDetector(
                         behavior: HitTestBehavior.opaque,
@@ -363,11 +367,22 @@ class DevicesPage extends StatelessWidget {
                                   }
                                 },
                               ),
-                              if (!d.online || !trusted)
+                              if (true)
                                 PopupMenuButton<String>(
                                   tooltip: '设备操作',
                                   icon: Icon(Icons.more_vert_rounded, color: cc.moonDim),
                                   onSelected: (value) async {
+                                    if (value == 'favorite') {
+                                      final err = await state.setDeviceMeta(d.deviceId, favorite: !favorite);
+                                      if (context.mounted && err != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+                                      return;
+                                    }
+                                    if (value == 'alias') {
+                                      final ctrl = TextEditingController(text: state.deviceAliases[d.deviceId] ?? '');
+                                      final alias = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(title: const Text('设备备注'), content: TextField(controller: ctrl, autofocus: true, decoration: const InputDecoration(hintText: '例如：客厅电脑')), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text.trim()), child: const Text('保存'))]));
+                                      if (alias != null) { final err = await state.setDeviceMeta(d.deviceId, alias: alias); if (context.mounted && err != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err))); }
+                                      return;
+                                    }
                                     if (value != 'remove' || !context.mounted) return;
                                     final ok = await showDialog<bool>(
                                       context: context,
@@ -396,7 +411,9 @@ class DevicesPage extends StatelessWidget {
                                       );
                                     }
                                   },
-                                  itemBuilder: (_) => const [
+                                  itemBuilder: (_) => [
+                                    PopupMenuItem(value: 'favorite', child: Text(favorite ? '取消收藏' : '收藏设备')),
+                                    PopupMenuItem(value: 'alias', child: Text('添加备注')),
                                     PopupMenuItem(value: 'remove', child: Text('移除设备记录')),
                                   ],
                                 ),

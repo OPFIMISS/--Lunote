@@ -31,3 +31,17 @@ The current Android application version is **1.2.0 (3)**. The application id and
 Lunote has no cloud relay and no account service. Message contents are stored in an encrypted local database. Files are transferred directly between trusted devices. Network discovery broadcasts device metadata only; message and file contents use the authenticated encrypted session.
 
 See `docs/协议.md`, `docs/安全模型.md`, and `docs/交付报告.md` for the protocol, security model, and verification history.
+
+## Screenshots
+
+### Android
+
+![Android home](docs/screenshots/android-start.png)
+
+![Android settings](docs/screenshots/android-settings.png)
+
+![Android receive directory](docs/screenshots/android-receive-directory.png)
+
+### Windows
+
+![Windows home](docs/screenshots/windows-start.png)

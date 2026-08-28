@@ -25,6 +25,8 @@ class AppState extends ChangeNotifier {
   String? defaultDownloadDir;
   String? receiveTreeUri;
   bool pinEnabled = false;
+  final Set<String> favoriteDevices = {};
+  final Map<String, String> deviceAliases = {};
 
   /// 主题：dark / light / system（settings.json 持久化）
   String themeMode = 'dark';
@@ -87,6 +89,13 @@ class AppState extends ChangeNotifier {
     defaultDownloadDir = stMap?['downloads_dir'] as String?;
     receiveTreeUri = stMap?['receive_tree_uri'] as String?;
     pinEnabled = stMap?['pin_enabled'] == true;
+    final meta = stMap?['device_meta'] as Map?;
+    meta?.forEach((id, value) {
+      final m = (value as Map?)?.cast<String, dynamic>();
+      if (m?['favorite'] == true) favoriteDevices.add(id.toString());
+      final alias = m?['alias'] as String?;
+      if (alias != null && alias.isNotEmpty) deviceAliases[id.toString()] = alias;
+    });
     themeMode = stMap?['theme'] as String? ?? 'dark';
     conflictPolicy = stMap?['conflict'] as String? ?? 'rename';
     await refreshTrusted();
@@ -204,6 +213,8 @@ class AppState extends ChangeNotifier {
   PeerInfo? peer(String deviceId) => peers[deviceId];
 
   String peerName(String deviceId) {
+    final alias = deviceAliases[deviceId];
+    if (alias != null && alias.isNotEmpty) return alias;
     final p = peers[deviceId];
     if (p != null && p.name.isNotEmpty) return p.name;
     final t = trusted[deviceId];
@@ -485,6 +496,19 @@ class AppState extends ChangeNotifier {
       return null;
     }
     return r['error'] as String? ?? '移除失败';
+  }
+
+  Future<String?> setDeviceMeta(String deviceId, {String? alias, bool? favorite}) async {
+    final r = await core.call('set_device_meta', {'device_id': deviceId, 'alias': alias, 'favorite': favorite});
+    if (r['ok'] != true) return r['error'] as String? ?? '保存失败';
+    if (alias != null) {
+      if (alias.isEmpty) { deviceAliases.remove(deviceId); } else { deviceAliases[deviceId] = alias; }
+    }
+    if (favorite != null) {
+      if (favorite) { favoriteDevices.add(deviceId); } else { favoriteDevices.remove(deviceId); }
+    }
+    notifyListeners();
+    return null;
   }
 
   Future<String?> acceptTransfer(String transferId, String dest) async {

@@ -318,6 +318,13 @@ fn dispatch(runtime: &Runtime, rt: &tokio::runtime::Runtime, cmd_json: &str) -> 
             let pin = v.get("pin").and_then(|x| x.as_str()).unwrap_or("");
             ok(&format!(",\"valid\":{}", runtime.verify_pin(pin)))
         }
+        "set_device_meta" => {
+            let id = v.get("device_id").and_then(|x| x.as_str()).unwrap_or("");
+            let alias = v.get("alias").and_then(|x| x.as_str());
+            let favorite = v.get("favorite").and_then(|x| x.as_bool());
+            runtime.set_device_meta(id, alias, favorite)?;
+            ok("")
+        }
         "set_background" => {
             let bg = v
                 .get("background")

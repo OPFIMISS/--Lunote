@@ -9,6 +9,20 @@ Android / Windows 10+ / Linux，设备直连（E2E），默认加密，本地加
 
 设置页还支持可选应用锁：应用从后台恢复时重新锁定，核心只保存 PIN 的 SHA-256 摘要。
 
+## 项目截图
+
+### Android
+
+![Android 首页](docs/screenshots/android-start.png)
+
+![Android 设置](docs/screenshots/android-settings.png)
+
+![Android 接收目录](docs/screenshots/android-receive-directory.png)
+
+### Windows
+
+![Windows 首页](docs/screenshots/windows-start.png)
+
 - 项目根目录：`D:\Lunote 2\moonletter`
 - 技术栈：Rust（核心：tokio + rustls 1.3 + Ed25519 + AES-256-GCM）＋ Flutter（UI）
 - 详细说明：`docs/`（计划与架构、协议、安全模型、构建说明、开发路径指南、交付报告）

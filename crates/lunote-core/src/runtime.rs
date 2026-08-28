@@ -67,6 +67,7 @@ pub struct Runtime {
     pub conflict_setting: Mutex<ConflictPolicy>,
     pub receive_tree_uri: Mutex<Option<String>>,
     pub pin_hash: Mutex<Option<String>>,
+    pub device_meta: Mutex<serde_json::Map<String, serde_json::Value>>,
     settings_write_lock: Mutex<()>,
     data_dir: PathBuf,
     rx: broadcast::Receiver<CoreEvent>,
@@ -97,6 +98,7 @@ impl Runtime {
         let mut conflict_setting = ConflictPolicy::Rename;
         let mut receive_tree_uri: Option<String> = None;
         let mut pin_hash: Option<String> = None;
+        let mut device_meta = serde_json::Map::new();
         if let Ok(data) = std::fs::read_to_string(cfg.data_dir.join("settings.json")) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
                 if let Some(b) = v.get("auto_trust").and_then(|x| x.as_bool()) {
@@ -127,6 +129,9 @@ impl Runtime {
                     .get("pin_hash")
                     .and_then(|x| x.as_str())
                     .map(str::to_owned);
+                if let Some(m) = v.get("device_meta").and_then(|x| x.as_object()) {
+                    device_meta = m.clone();
+                }
             }
         }
         let auto_trust = Arc::new(AtomicBool::new(auto_trust_enabled));
@@ -203,6 +208,7 @@ impl Runtime {
             conflict_setting: Mutex::new(conflict_setting),
             receive_tree_uri: Mutex::new(receive_tree_uri),
             pin_hash: Mutex::new(pin_hash),
+            device_meta: Mutex::new(device_meta),
             settings_write_lock: Mutex::new(()),
             data_dir: cfg.data_dir,
             rx,
@@ -360,6 +366,29 @@ impl Runtime {
         self.pin_hash.lock().unwrap().as_deref() == Some(candidate.as_str())
     }
 
+    pub fn set_device_meta(
+        &self,
+        device_id: &str,
+        alias: Option<&str>,
+        favorite: Option<bool>,
+    ) -> Result<()> {
+        let mut meta = self.device_meta.lock().unwrap();
+        let entry = meta
+            .entry(device_id.to_string())
+            .or_insert_with(|| serde_json::json!({}));
+        if let Some(obj) = entry.as_object_mut() {
+            if let Some(a) = alias {
+                obj.insert("alias".into(), serde_json::Value::String(a.to_string()));
+            }
+            if let Some(f) = favorite {
+                obj.insert("favorite".into(), serde_json::Value::Bool(f));
+            }
+        }
+        let snapshot = meta.clone();
+        drop(meta);
+        self.write_settings(serde_json::json!({"device_meta": snapshot}))
+    }
+
     pub fn transfers(&self) -> Vec<crate::events::TransferInfo> {
         self.transfers.list()
     }
@@ -416,6 +445,7 @@ impl Runtime {
             "conflict": match *self.conflict_setting.lock().unwrap() { ConflictPolicy::Rename => "rename", ConflictPolicy::Overwrite => "overwrite", ConflictPolicy::Skip => "skip" },
             "receive_tree_uri": self.receive_tree_uri.lock().unwrap().clone(),
             "pin_enabled": self.pin_hash.lock().unwrap().is_some(),
+            "device_meta": self.device_meta.lock().unwrap().clone(),
         })
     }
 
@@ -430,6 +460,7 @@ impl Runtime {
             "conflict": match *self.conflict_setting.lock().unwrap() { ConflictPolicy::Rename => "rename", ConflictPolicy::Overwrite => "overwrite", ConflictPolicy::Skip => "skip" },
             "receive_tree_uri": self.receive_tree_uri.lock().unwrap().clone(),
             "pin_enabled": self.pin_hash.lock().unwrap().is_some(),
+            "device_meta": self.device_meta.lock().unwrap().clone(),
         });
         if let Ok(data) = std::fs::read_to_string(&path) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
