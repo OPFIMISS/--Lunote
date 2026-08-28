@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["crates/lunote-core", "crates/lunote-cli", "crates/lunote-bridge"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Lunote Team"]
+description = "月笺 Lunote — 无云端、无账号、无互联网依赖的局域网通信与文件传输应用（核心）"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

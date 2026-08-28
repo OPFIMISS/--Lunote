@@ -1,0 +1,80 @@
+name: build
+
+# 月笺 Lunote 三平台构建（Windows / Android / Linux）
+# 说明：本仓库在 Windows 上开发验证；Linux 桌面二进制需在 Linux 环境构建，
+# 此工作流在 ubuntu 上产出 Linux 交付物，并在 windows 上复验桌面/Android。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.0'
+          channel: stable
+      - name: Linux 桌面构建
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter build linux --release
+      - name: 上传 Linux 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: lunote-linux
+          path: app/build/linux/x64/release/bundle/
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.0'
+          channel: stable
+      - name: 构建桥接库
+        run: |
+          cargo build --release -p lunote-bridge
+      - name: Windows 桌面构建
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter build windows --release
+          Copy-Item ..\target\release\lunote_bridge.dll build\windows\x64\runner\Release\
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lunote-windows
+          path: app/build/windows/x64/runner/Release/
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.0'
+          channel: stable
+      - name: 安装 cargo-ndk 并编译核心
+        run: |
+          cargo install cargo-ndk --locked
+          cd crates/lunote-bridge
+          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o ../../app/android/app/src/main/jniLibs build --release
+      - name: Android APK 构建
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lunote-android
+          path: app/build/app/outputs/flutter-apk/

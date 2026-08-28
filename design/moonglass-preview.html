@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>月笺 · 月光玻璃主题预览</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #152033;
+      --ink-soft: #55637a;
+      --paper: rgba(251, 253, 255, .68);
+      --paper-solid: #f7f8fb;
+      --glass: rgba(236, 244, 250, .48);
+      --glass-strong: rgba(255, 255, 255, .72);
+      --line: rgba(255, 255, 255, .82);
+      --shadow: rgba(55, 69, 91, .18);
+      --moon: #f2c55f;
+      --moon-deep: #b47b13;
+      --berry: #db538a;
+      --aqua: #38b9c9;
+      --mint: #43b98b;
+      --danger: #df6270;
+      --panel-radius: 18px;
+      --bubble-radius: 16px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        linear-gradient(135deg, rgba(255, 204, 219, .72), rgba(207, 239, 243, .86) 42%, rgba(250, 229, 173, .76));
+    }
+
+    button, input { font: inherit; }
+    button { color: inherit; }
+
+    .app {
+      position: relative;
+      display: grid;
+      grid-template-columns: 224px minmax(460px, 1fr) minmax(260px, 292px);
+      width: min(1440px, calc(100vw - 32px));
+      height: min(900px, calc(100vh - 32px));
+      margin: 16px auto;
+      border: 1px solid rgba(255,255,255,.88);
+      border-radius: 22px;
+      overflow: hidden;
+      background: rgba(239, 245, 249, .32);
+      box-shadow: 0 24px 70px rgba(49, 61, 83, .25), inset 0 1px rgba(255,255,255,.9);
+      backdrop-filter: blur(26px) saturate(1.25);
+    }
+
+    .sidebar, .details {
+      background: rgba(244, 248, 251, .46);
+      backdrop-filter: blur(30px) saturate(1.3);
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      padding: 18px 14px;
+      border-right: 1px solid rgba(255,255,255,.75);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 4px 8px 18px;
+    }
+
+    .app-icon {
+      position: relative;
+      width: 48px;
+      height: 48px;
+      flex: 0 0 48px;
+      border-radius: 15px;
+      background: url('lunote-icon-preview.png') center / cover no-repeat;
+      border: 1px solid rgba(255,255,255,.82);
+      box-shadow: 0 7px 15px rgba(44, 86, 97, .22), inset 0 2px rgba(255,255,255,.55);
+    }
+
+    .brand-name { font-size: 18px; font-weight: 800; letter-spacing: 2px; }
+    .brand-sub { margin-top: 1px; font-size: 9px; color: var(--ink-soft); letter-spacing: 3px; }
+
+    .nav-list { display: grid; gap: 7px; margin-top: 10px; }
+    .nav-button, .soft-button, .file-action, .icon-button {
+      border: 0;
+      cursor: pointer;
+      transition: transform 160ms cubic-bezier(.2, 1.5, .5, 1), box-shadow 160ms, background 160ms;
+    }
+
+    .nav-button {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 48px;
+      padding: 0 14px;
+      border-radius: 13px 18px 13px 18px;
+      color: var(--ink-soft);
+      background: transparent;
+      text-align: left;
+    }
+    .nav-button:hover { background: rgba(255,255,255,.48); transform: translateX(3px); }
+    .nav-button.active {
+      color: #fff;
+      font-weight: 700;
+      background: linear-gradient(95deg, rgba(219,83,138,.94), rgba(199,73,129,.90));
+      box-shadow: 0 8px 18px rgba(196, 65, 121, .22), inset 0 1px rgba(255,255,255,.42);
+    }
+    .nav-button:active, .soft-button:active, .file-action:active, .icon-button:active { transform: scale(.94); }
+
+    .nav-icon {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      font-size: 18px;
+      font-weight: 800;
+    }
+
+    .me-card {
+      margin-top: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px;
+      border-radius: 16px;
+      background: rgba(255,255,255,.48);
+      border: 1px solid rgba(255,255,255,.72);
+      box-shadow: inset 0 1px rgba(255,255,255,.62);
+    }
+    .me-avatar, .avatar {
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      font-weight: 800;
+      background: rgba(242,197,95,.28);
+      color: var(--moon-deep);
+    }
+    .me-avatar { width: 35px; height: 35px; }
+    .avatar { width: 42px; height: 42px; }
+    .me-name { font-size: 13px; font-weight: 700; }
+    .me-id { font-size: 10px; color: var(--ink-soft); margin-top: 2px; }
+
+    .main {
+      display: grid;
+      grid-template-rows: 72px minmax(0, 1fr) 76px;
+      min-width: 0;
+      background: rgba(248, 249, 248, .46);
+    }
+    .chat-header {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 0 20px;
+      border-bottom: 1px solid rgba(255,255,255,.78);
+      background: rgba(255,255,255,.32);
+      backdrop-filter: blur(22px);
+    }
+    .peer-copy { min-width: 0; }
+    .peer-name, .peer-state { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .icon-button {
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 13px;
+      background: rgba(255,255,255,.50);
+      box-shadow: inset 0 1px rgba(255,255,255,.78);
+      font-size: 19px;
+    }
+    .peer-name { font-size: 15px; font-weight: 800; }
+    .peer-state { margin-top: 2px; font-size: 11px; color: var(--mint); }
+    .trusted { margin-left: auto; flex: 0 0 auto; color: #258765; font-size: 12px; font-weight: 700; }
+
+    .timeline {
+      overflow: auto;
+      padding: 20px 22px 26px;
+      scroll-behavior: smooth;
+    }
+    .timeline::-webkit-scrollbar { width: 8px; }
+    .timeline::-webkit-scrollbar-thumb { background: rgba(94,109,132,.20); border-radius: 8px; }
+    .date-divider {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 4px 0 18px;
+      color: var(--ink-soft);
+      font-size: 10px;
+    }
+    .date-divider::before, .date-divider::after { content: ""; height: 1px; flex: 1; background: rgba(96,108,127,.14); }
+
+    .message-row { display: flex; min-width: 0; align-items: flex-end; gap: 9px; margin: 10px 0; animation: pop-in 400ms cubic-bezier(.2, 1.35, .4, 1) both; }
+    .message-row.outgoing { justify-content: flex-end; }
+    .message-stack { min-width: 0; max-width: min(590px, 78%); }
+    .message-stack.file-stack { width: 520px; max-width: 78%; }
+    .bubble {
+      padding: 10px 13px;
+      border: 1px solid rgba(255,255,255,.75);
+      border-radius: 7px var(--bubble-radius) var(--bubble-radius) var(--bubble-radius);
+      background: rgba(255,255,255,.66);
+      box-shadow: 0 7px 18px rgba(64,77,98,.10), inset 0 1px rgba(255,255,255,.75);
+      backdrop-filter: blur(18px);
+      line-height: 1.55;
+      font-size: 13px;
+    }
+    .outgoing .bubble {
+      border-radius: var(--bubble-radius) 7px var(--bubble-radius) var(--bubble-radius);
+      background: rgba(55, 185, 200, .82);
+      color: #fff;
+      border-color: rgba(255,255,255,.45);
+      box-shadow: 0 8px 18px rgba(28,139,154,.18), inset 0 1px rgba(255,255,255,.36);
+    }
+    .timestamp { padding: 4px 5px 0; color: var(--ink-soft); font-size: 9px; }
+    .outgoing .timestamp { text-align: right; }
+
+    .file-bubble {
+      width: 100%;
+      padding: 12px;
+      border-radius: 8px 18px 18px 18px;
+      background: rgba(255,255,255,.69);
+      border: 1px solid rgba(255,255,255,.78);
+      box-shadow: 0 10px 24px rgba(65,76,96,.13), inset 0 1px rgba(255,255,255,.86);
+      backdrop-filter: blur(20px) saturate(1.25);
+    }
+    .file-head { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+    .file-head > div:nth-child(2) { min-width: 0; }
+    .file-kind {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border-radius: 13px 16px 13px 16px;
+      color: #fff;
+      font-size: 20px;
+      background: linear-gradient(145deg, #e26599, #c33f79);
+      box-shadow: 0 6px 13px rgba(192,56,115,.22), inset 0 1px rgba(255,255,255,.40);
+    }
+    .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 800; }
+    .file-meta { margin-top: 3px; color: var(--ink-soft); font-size: 10px; }
+    .verified { color: #238764; font-size: 11px; font-weight: 700; }
+    .progress { height: 6px; margin: 11px 0 10px; overflow: hidden; border-radius: 6px; background: rgba(94,109,132,.12); }
+    .progress > div { width: 100%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--aqua), #68d4b1); }
+    .file-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+    .file-action, .soft-button {
+      min-height: 36px;
+      padding: 0 12px;
+      border-radius: 11px 15px 11px 15px;
+      background: rgba(230, 235, 240, .78);
+      box-shadow: inset 0 1px rgba(255,255,255,.8), 0 4px 9px rgba(61,74,95,.08);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .file-action.primary { color: #fff; background: var(--berry); }
+    .file-action:hover, .soft-button:hover { transform: translateY(-2px); box-shadow: 0 7px 15px rgba(61,74,95,.13), inset 0 1px rgba(255,255,255,.8); }
+
+    .composer {
+      display: grid;
+      grid-template-columns: 42px 42px minmax(0, 1fr) 46px;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 18px;
+      border-top: 1px solid rgba(255,255,255,.78);
+      background: rgba(255,255,255,.38);
+      backdrop-filter: blur(24px);
+    }
+    .composer input {
+      width: 100%;
+      height: 42px;
+      border: 1px solid rgba(255,255,255,.82);
+      border-radius: 14px 18px 14px 18px;
+      outline: 0;
+      padding: 0 15px;
+      color: var(--ink);
+      background: rgba(255,255,255,.52);
+      box-shadow: inset 0 2px 6px rgba(54,68,90,.06);
+    }
+    .send {
+      color: #fff;
+      background: var(--berry);
+      box-shadow: 0 8px 17px rgba(196,62,116,.23), inset 0 1px rgba(255,255,255,.38);
+    }
+
+    .details {
+      min-width: 0;
+      padding: 18px 16px;
+      border-left: 1px solid rgba(255,255,255,.72);
+      overflow: auto;
+    }
+    .details-title { font-size: 15px; font-weight: 800; }
+    .details-sub { margin-top: 4px; color: var(--ink-soft); font-size: 10px; }
+    .detail-section { margin-top: 20px; }
+    .section-label { margin-bottom: 8px; color: var(--ink-soft); font-size: 10px; font-weight: 700; }
+    .transfer-item {
+      padding: 12px;
+      border-radius: 15px;
+      background: rgba(255,255,255,.46);
+      border: 1px solid rgba(255,255,255,.75);
+      box-shadow: inset 0 1px rgba(255,255,255,.65);
+    }
+    .transfer-item + .transfer-item { margin-top: 8px; }
+    .transfer-title { font-size: 11px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .transfer-state { margin-top: 5px; font-size: 10px; color: var(--mint); }
+    .transfer-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+    .mini { min-height: 31px; padding: 0 9px; font-size: 10px; }
+    .theme-pills { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+    .theme-pill {
+      min-height: 38px;
+      border: 0;
+      border-radius: 11px;
+      cursor: pointer;
+      background: rgba(255,255,255,.45);
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .theme-pill.active { color: #fff; background: var(--aqua); }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 30px;
+      z-index: 10;
+      padding: 11px 16px;
+      border-radius: 12px 16px 12px 16px;
+      color: #fff;
+      background: rgba(25, 36, 54, .84);
+      box-shadow: 0 10px 28px rgba(21,30,45,.24);
+      backdrop-filter: blur(18px);
+      transform: translate(-50%, 24px) scale(.92);
+      opacity: 0;
+      pointer-events: none;
+      transition: 260ms cubic-bezier(.2, 1.4, .4, 1);
+      font-size: 12px;
+    }
+    .toast.show { transform: translate(-50%, 0) scale(1); opacity: 1; }
+
+    @keyframes pop-in {
+      from { opacity: 0; transform: translateY(10px) scale(.97); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @media (max-width: 1080px) {
+      .app { grid-template-columns: 200px minmax(0, 1fr); }
+      .details { display: none; }
+    }
+    @media (max-width: 760px) {
+      body { overflow: auto; }
+      .app { width: 100vw; height: 100vh; margin: 0; border: 0; border-radius: 0; grid-template-columns: 74px minmax(0, 1fr); }
+      .sidebar { padding-inline: 8px; }
+      .brand { justify-content: center; padding-inline: 0; }
+      .brand-copy, .nav-button span:last-child, .me-card > div:last-child { display: none; }
+      .nav-button { justify-content: center; padding: 0; }
+      .me-card { justify-content: center; padding: 8px; }
+      .message-stack { max-width: 88%; }
+      .file-head { grid-template-columns: 38px minmax(0,1fr); }
+      .verified { grid-column: 2; }
+      .trusted { display: none; }
+      .timeline { padding-inline: 14px; }
+      .composer { padding-inline: 10px; grid-template-columns: 38px 38px minmax(0, 1fr) 42px; gap: 6px; }
+      .icon-button { width: 38px; height: 38px; }
+    }
+    @media (max-width: 520px) {
+      .app { grid-template-columns: minmax(0, 1fr); }
+      .sidebar { display: none; }
+      .chat-header { padding-inline: 10px; }
+      .chat-header > .avatar { display: none; }
+      .message-row > .avatar { width: 32px; height: 32px; flex: 0 0 32px; }
+      .message-row.outgoing .message-stack { width: calc(100vw - 42px); max-width: calc(100vw - 42px); }
+      .message-row:not(.outgoing) .message-stack { max-width: calc(100% - 41px); }
+      .message-row:not(.outgoing) .message-stack.file-stack { width: calc(100vw - 83px); max-width: calc(100vw - 83px); }
+      .message-row.outgoing .file-bubble { width: calc(100vw - 42px); }
+      .message-row:not(.outgoing) .file-bubble { width: calc(100vw - 83px); }
+      .file-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+      .file-action { width: 100%; min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="app-icon" title="新图标方向：月牙与信笺"></div>
+        <div class="brand-copy">
+          <div class="brand-name">月笺</div>
+          <div class="brand-sub">LUNOTE</div>
+        </div>
+      </div>
+
+      <nav class="nav-list">
+        <button class="nav-button"><span class="nav-icon">▣</span><span>设备</span></button>
+        <button class="nav-button active"><span class="nav-icon">▰</span><span>对话</span></button>
+        <button class="nav-button"><span class="nav-icon">↕</span><span>传输</span></button>
+        <button class="nav-button"><span class="nav-icon">⚙</span><span>设置</span></button>
+      </nav>
+
+      <div class="me-card">
+        <div class="me-avatar">P</div>
+        <div><div class="me-name">PC</div><div class="me-id">37694b27</div></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="chat-header">
+        <button class="icon-button" title="返回">‹</button>
+        <div class="avatar">M</div>
+        <div class="peer-copy"><div class="peer-name">MEIZU 21</div><div class="peer-state">在线 · 局域网直连</div></div>
+        <div class="trusted">✦ 可信设备</div>
+      </header>
+
+      <section class="timeline" id="timeline">
+        <div class="date-divider">今天 15:36</div>
+
+        <div class="message-row">
+          <div class="avatar">M</div>
+          <div class="message-stack">
+            <div class="bubble">你好，新的文件气泡看起来怎么样？</div>
+            <div class="timestamp">15:36</div>
+          </div>
+        </div>
+
+        <div class="message-row outgoing">
+          <div class="message-stack">
+            <div class="bubble">这样就不会一直固定在最上面了，文件会跟着聊天顺序出现。</div>
+            <div class="timestamp">15:37 · 已送达</div>
+          </div>
+        </div>
+
+        <div class="message-row">
+          <div class="avatar">M</div>
+          <div class="message-stack file-stack">
+            <article class="file-bubble">
+              <div class="file-head">
+                <div class="file-kind">▧</div>
+                <div>
+                  <div class="file-name">S60817-20425271_com.agentbell.mobile.png</div>
+                  <div class="file-meta">PNG 图片 · 156 KB · 来自 MEIZU 21</div>
+                </div>
+                <div class="verified">✓ 校验通过</div>
+              </div>
+              <div class="progress"><div></div></div>
+              <div class="file-actions">
+                <button class="file-action primary" data-toast="预览：打开文件">打开文件</button>
+                <button class="file-action" data-toast="预览：打开文件所在文件夹">打开所在文件夹</button>
+                <button class="file-action" data-toast="已复制文件名">复制文件名</button>
+              </div>
+            </article>
+            <div class="timestamp">15:38 · 已接收</div>
+          </div>
+        </div>
+
+        <div class="message-row outgoing">
+          <div class="message-stack file-stack">
+            <article class="file-bubble">
+              <div class="file-head">
+                <div class="file-kind" style="background:linear-gradient(145deg,#46c4d0,#2398b1)">⌑</div>
+                <div>
+                  <div class="file-name">月笺-体验优化方案.pdf</div>
+                  <div class="file-meta">PDF 文档 · 2.4 MB · 发送给 MEIZU 21</div>
+                </div>
+                <div class="verified">✓ 已完成</div>
+              </div>
+              <div class="progress"><div></div></div>
+              <div class="file-actions">
+                <button class="file-action primary" data-toast="预览：打开源文件">打开文件</button>
+                <button class="file-action" data-toast="预览：打开源文件所在文件夹">打开所在文件夹</button>
+                <button class="file-action" data-toast="已准备重新发送">重新发送</button>
+              </div>
+            </article>
+            <div class="timestamp">15:39 · 已送达</div>
+          </div>
+        </div>
+      </section>
+
+      <footer class="composer">
+        <button class="icon-button" title="添加附件">⌕</button>
+        <button class="icon-button" title="发送文件夹">▰</button>
+        <input id="messageInput" placeholder="输入消息…（自动识别链接）" />
+        <button class="icon-button send" id="sendButton" title="发送">➤</button>
+      </footer>
+    </main>
+
+    <aside class="details">
+      <div class="details-title">传输详情</div>
+      <div class="details-sub">聊天与传输中心共享同一份状态</div>
+
+      <div class="detail-section">
+        <div class="section-label">当前主题</div>
+        <div class="theme-pills">
+          <button class="theme-pill">深色</button>
+          <button class="theme-pill">浅色</button>
+          <button class="theme-pill active">玻璃</button>
+        </div>
+      </div>
+
+      <div class="detail-section">
+        <div class="section-label">今天 · 已完成 2</div>
+        <div class="transfer-item">
+          <div class="transfer-title">S60817-20425271_com.agentbell.mobile.png</div>
+          <div class="transfer-state">✓ 接收完成 · 校验通过 · 15:38</div>
+          <div class="transfer-actions">
+            <button class="soft-button mini" data-toast="预览：打开文件">打开</button>
+            <button class="soft-button mini" data-toast="预览：定位到聊天中的文件气泡">跳转对话</button>
+          </div>
+        </div>
+        <div class="transfer-item">
+          <div class="transfer-title">月笺-体验优化方案.pdf</div>
+          <div class="transfer-state">✓ 发送完成 · 15:39</div>
+          <div class="transfer-actions">
+            <button class="soft-button mini" data-toast="预览：打开文件所在文件夹">所在文件夹</button>
+            <button class="soft-button mini" data-toast="预览：定位到聊天中的文件气泡">跳转对话</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-section">
+        <div class="section-label">动效原则</div>
+        <div class="transfer-item" style="font-size:11px;line-height:1.7;color:var(--ink-soft)">
+          按钮按下缩放，松手轻弹；气泡仅在出现时上浮一次；毛玻璃保持清晰，不使用持续晃动或闪烁。
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const toast = document.getElementById('toast');
+    let toastTimer;
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 1600);
+    }
+
+    document.querySelectorAll('[data-toast]').forEach(button => {
+      button.addEventListener('click', () => showToast(button.dataset.toast));
+    });
+
+    document.querySelectorAll('.nav-button').forEach(button => {
+      button.addEventListener('click', () => {
+        document.querySelectorAll('.nav-button').forEach(item => item.classList.remove('active'));
+        button.classList.add('active');
+        showToast(`预览切换：${button.textContent.trim()}`);
+      });
+    });
+
+    document.querySelectorAll('.theme-pill').forEach(button => {
+      button.addEventListener('click', () => {
+        document.querySelectorAll('.theme-pill').forEach(item => item.classList.remove('active'));
+        button.classList.add('active');
+        showToast(`${button.textContent}主题仅作交互示意`);
+      });
+    });
+
+    const input = document.getElementById('messageInput');
+    document.getElementById('sendButton').addEventListener('click', () => {
+      const text = input.value.trim();
+      if (!text) return showToast('先输入一点内容');
+      const row = document.createElement('div');
+      row.className = 'message-row outgoing';
+      const now = new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'});
+      row.innerHTML = `<div class="message-stack"><div class="bubble"></div><div class="timestamp">${now} · 发送中</div></div>`;
+      row.querySelector('.bubble').textContent = text;
+      document.getElementById('timeline').appendChild(row);
+      input.value = '';
+      row.scrollIntoView({behavior: 'smooth', block: 'end'});
+      setTimeout(() => row.querySelector('.timestamp').textContent = `${now} · 已送达`, 700);
+    });
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Enter') document.getElementById('sendButton').click();
+    });
+  </script>
+</body>
+</html>
