@@ -104,6 +104,14 @@ class _LunoteAppState extends State<LunoteApp> with WidgetsBindingObserver {
         tcpPort: widget.tcpPortOverride ?? 45455,
         bridgeOverride: envBridge,
       );
+      // 新安装或仍使用旧默认名时，使用平台真实设备型号作为可识别名称。
+      // 用户已经自定义过的名称绝不覆盖。
+      if (detectedName != null &&
+          (state.deviceName.isEmpty ||
+              state.deviceName == '我的设备' ||
+              state.deviceName == 'Android 设备')) {
+        await state.renameDevice(detectedName);
+      }
       if (mounted) setState(() {});
       if (!Platform.isAndroid && !Platform.isIOS) {
         // 窗口/托盘设置失败只记录日志并降级，不阻塞应用使用
