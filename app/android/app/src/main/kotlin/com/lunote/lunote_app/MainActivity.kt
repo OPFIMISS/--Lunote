@@ -27,6 +27,7 @@ class MainActivity : FlutterActivity() {
     private val platformChannel = "com.lunote.lunote_app/platform"
     private var multicastLock: WifiManager.MulticastLock? = null
     private var pendingIntent: Intent? = null
+    private var pendingTransferId: String? = null
     private var pendingFolderResult: MethodChannel.Result? = null
     private var pendingReceiveFolderResult: MethodChannel.Result? = null
     private val folderRequestCode = 4207
@@ -46,6 +47,7 @@ class MainActivity : FlutterActivity() {
                     notifyTransfer(
                         call.argument<String>("title") ?: "月笺传输",
                         call.argument<String>("body") ?: "",
+                        call.argument<String>("transfer_id"),
                     )
                     result.success(true)
                 }
@@ -61,6 +63,7 @@ class MainActivity : FlutterActivity() {
                 "openDirectory" -> result.success(openDirectory(path))
                 "openFile" -> result.success(openFile(path))
                 "getPendingShare" -> result.success(readShareIntent(pendingIntent ?: intent).also { pendingIntent = null })
+                "getPendingTransferId" -> result.success(pendingTransferId.also { pendingTransferId = null })
                 "pickFolderForTransfer" -> pickFolderForTransfer(result)
                 "pickReceiveFolder" -> pickReceiveFolder(result)
                 "exportToTree" -> result.success(exportToTree(path, call.argument<String>("treeUri")))
@@ -68,6 +71,7 @@ class MainActivity : FlutterActivity() {
             }
         }
         pendingIntent = intent
+        pendingTransferId = intent.getStringExtra("transfer_id")
     }
 
     private fun deviceModel(): String {
@@ -83,6 +87,7 @@ class MainActivity : FlutterActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingIntent = intent
+        pendingTransferId = intent.getStringExtra("transfer_id")
     }
 
     private fun readShareIntent(source: Intent): Map<String, Any?>? {
@@ -331,13 +336,14 @@ class MainActivity : FlutterActivity() {
             ?.createNotificationChannel(channel)
     }
 
-    private fun notifyTransfer(title: String, body: String) {
+    private fun notifyTransfer(title: String, body: String, transferId: String?) {
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission("android.permission.POST_NOTIFICATIONS") !=
                 android.content.pm.PackageManager.PERMISSION_GRANTED
         ) return
         val openIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            if (!transferId.isNullOrBlank()) putExtra("transfer_id", transferId)
         }
         val contentIntent = PendingIntent.getActivity(
             this, 9302, openIntent,

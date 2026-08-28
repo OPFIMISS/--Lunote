@@ -370,7 +370,7 @@ class AppState extends ChangeNotifier {
           : (t.isDone ? '文件校验通过' : (t.error ?? '可重试传输'));
       await const MethodChannel('com.lunote.lunote_app/platform').invokeMethod(
         'notifyTransfer',
-        {'title': title, 'body': body},
+        {'title': title, 'body': body, 'transfer_id': t.transferId},
       );
     } catch (_) {
       // 通知不可用不影响传输本身。

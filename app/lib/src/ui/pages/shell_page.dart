@@ -39,6 +39,7 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
     // 新设备连接 → 弹出信任确认；已自动信任（同名同 IP）则只提示
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _handlePendingShare();
+      _handlePendingTransfer();
       AppState.instance.core.events.listen((e) {
         if (e['event'] == 'peer_connected' &&
             e['is_new_device'] == true &&
@@ -66,6 +67,17 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
         }
       });
     });
+  }
+
+  Future<void> _handlePendingTransfer() async {
+    try {
+      const channel = MethodChannel('com.lunote.lunote_app/platform');
+      final id = await channel.invokeMethod<String>('getPendingTransferId');
+      if (!mounted || id == null || id.isEmpty) return;
+      setState(() => _nav = _Nav.transfers);
+    } on MissingPluginException {
+      // Desktop does not provide Android notification actions.
+    } catch (_) {}
   }
 
   @override
