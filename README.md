@@ -23,6 +23,10 @@ Android / Windows 10+ / Linux，设备直连（E2E），默认加密，本地加
 
 ![Windows 首页](docs/screenshots/windows-start.png)
 
+## 发布
+
+发布页资产由 tools/publish_github_release.ps1 校验并上传。配置 GitHub CLI 后执行 gh auth login，再运行该脚本。
+
 - 项目根目录：`D:\Lunote 2\moonletter`
 - 技术栈：Rust（核心：tokio + rustls 1.3 + Ed25519 + AES-256-GCM）＋ Flutter（UI）
 - 详细说明：`docs/`（计划与架构、协议、安全模型、构建说明、开发路径指南、交付报告）

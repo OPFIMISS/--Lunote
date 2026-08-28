@@ -45,3 +45,7 @@ See `docs/协议.md`, `docs/安全模型.md`, and `docs/交付报告.md` for the
 ### Windows
 
 ![Windows home](docs/screenshots/windows-start.png)
+
+## Release
+
+Use tools/publish_github_release.ps1 to verify and upload the tagged APK and release notes after running gh auth login.

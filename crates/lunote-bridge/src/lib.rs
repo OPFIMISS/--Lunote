@@ -492,6 +492,21 @@ mod tests {
             call(first, r#"{"cmd":"rename","name":"持久名称"}"#)["ok"],
             true
         );
+        assert_eq!(
+            call(
+                first,
+                r#"{"cmd":"set_conflict_policy","policy":"overwrite"}"#
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            call(
+                first,
+                r#"{"cmd":"set_receive_tree_uri","uri":"content://tree/test"}"#
+            )["ok"],
+            true
+        );
+        assert_eq!(call(first, r#"{"cmd":"set_pin","pin":"1234"}"#)["ok"], true);
         lunote_destroy(first);
 
         let second = create(&cfg);
@@ -499,6 +514,16 @@ mod tests {
         let settings = call(second, r#"{"cmd":"settings"}"#);
         assert_eq!(settings["settings"]["theme"], "light");
         assert_eq!(settings["settings"]["auto_trust"], false);
+        assert_eq!(settings["settings"]["conflict"], "overwrite");
+        assert_eq!(
+            settings["settings"]["receive_tree_uri"],
+            "content://tree/test"
+        );
+        assert_eq!(settings["settings"]["pin_enabled"], true);
+        assert_eq!(
+            call(second, r#"{"cmd":"verify_pin","pin":"1234"}"#)["valid"],
+            true
+        );
         assert_eq!(call(second, r#"{"cmd":"identity"}"#)["name"], "持久名称");
         lunote_destroy(second);
     }
