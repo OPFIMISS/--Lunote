@@ -58,6 +58,37 @@ class _TransfersPageState extends State<TransfersPage> {
     _ => true,
   };
 
+  Future<String?> _resolveReceiveDirectory(AppState state) async {
+    final configured = state.defaultDownloadDir;
+    if (Platform.isAndroid && state.receiveTreeUri != null) {
+      return state.resolvedDownloadDir();
+    }
+    if (configured != null && configured.isNotEmpty) return configured;
+    if (Platform.isAndroid) return state.resolvedDownloadDir();
+    return getDirectoryPath();
+  }
+
+  Future<String?> _acceptOne(AppState state, TransferItem t, String dir) {
+    return state.acceptTransfer(t.transferId, dir);
+  }
+
+  Future<void> _acceptAll(BuildContext context, AppState state, List<TransferItem> offered) async {
+    final dir = await _resolveReceiveDirectory(state);
+    if (dir == null || dir.isEmpty) return;
+    for (final transfer in offered) {
+      final err = await _acceptOne(state, transfer, dir);
+      if (err != null && context.mounted) {
+        _showError(context, err);
+        return;
+      }
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已一键接收 ${offered.length} 个文件')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final cc = LunoteColors.of(context);
@@ -69,6 +100,7 @@ class _TransfersPageState extends State<TransfersPage> {
           _matchesStatus(transfer);
     }).toList();
     final active = list.where((t) => t.isInProgress || t.isPaused).toList();
+    final offered = list.where((t) => t.isOffered && !t.isOutgoing).toList();
     final totalBytes = active.fold<int>(0, (sum, t) => sum + t.fileSize);
     final doneBytes = active.fold<int>(0, (sum, t) => sum + t.transferred);
     return Column(
@@ -85,6 +117,18 @@ class _TransfersPageState extends State<TransfersPage> {
             ),
           ),
         ),
+        if (offered.length > 1)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.icon(
+                onPressed: () => _acceptAll(context, state, offered),
+                icon: const Icon(Icons.download_done_rounded, size: 18),
+                label: Text('一键接收全部（${offered.length}）'),
+              ),
+            ),
+          ),
         if (active.length > 1)
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
@@ -199,30 +243,10 @@ class _TransfersPageState extends State<TransfersPage> {
                                 ? null
                                 : () => _openFolder(context, t),
                             onAccept: () async {
-                              String dir;
-                              final configured = state.defaultDownloadDir;
-                              if (Platform.isAndroid && state.receiveTreeUri != null) {
-                                // SAF URI is exported after completion; receive into a private path first.
-                                dir = await state.resolvedDownloadDir() ?? '';
-                                if (dir.isEmpty) return;
-                              } else if (configured != null && configured.isNotEmpty) {
-                                dir = configured;
-                              } else if (Platform.isAndroid) {
-                                dir = await state.resolvedDownloadDir() ?? '';
-                                if (dir.isEmpty) return;
-                              } else {
-                                final picked = await getDirectoryPath();
-                                if (picked == null) return;
-                                dir = picked;
-                              }
-                              final err = await state.acceptTransfer(
-                                t.transferId,
-                                dir,
-                              );
-                              if (err != null && context.mounted) {
-                                ScaffoldMessenger.of(context)
-                                    .showSnackBar(SnackBar(content: Text(err)));
-                              }
+                              final dir = await _resolveReceiveDirectory(state);
+                              if (dir == null || dir.isEmpty) return;
+                              final err = await _acceptOne(state, t, dir);
+                              if (err != null && context.mounted) _showError(context, err);
                             },
                             onReject: () async {
                               final err = await state.rejectTransfer(

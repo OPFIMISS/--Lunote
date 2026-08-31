@@ -63,7 +63,13 @@ class MainActivity : FlutterActivity() {
                 }
                 "openDirectory" -> result.success(openDirectory(path))
                 "openFile" -> result.success(openFile(path))
-                "getPendingShare" -> result.success(readShareIntent(pendingIntent ?: intent).also { pendingIntent = null })
+                "getPendingShare" -> {
+                    // Copying a shared 4 GB file can take minutes. Never perform it on
+                    // Flutter's platform thread or Android will show an ANR dialog.
+                    val source = pendingIntent ?: intent
+                    pendingIntent = null
+                    readShareIntentAsync(source, result)
+                }
                 "getPendingTransferId" -> result.success(pendingTransferId.also { pendingTransferId = null })
                 "getPendingTransferAction" -> result.success(pendingTransferAction.also { pendingTransferAction = null })
                 "pickFolderForTransfer" -> pickFolderForTransfer(result)
@@ -121,6 +127,17 @@ class MainActivity : FlutterActivity() {
             "path" to paths.firstOrNull(),
             "name" to paths.firstOrNull()?.let { java.io.File(it).name },
         )
+    }
+
+    private fun readShareIntentAsync(source: Intent, result: MethodChannel.Result) {
+        Thread {
+            val value = readShareIntent(source)
+            runOnUiThread { result.success(value) }
+        }.apply {
+            name = "lunote-share-copy"
+            isDaemon = true
+            start()
+        }
     }
 
     private fun copySharedUri(uri: Uri, index: Int = 0): String? {
@@ -391,6 +408,23 @@ class MainActivity : FlutterActivity() {
         super.onResume()
         // 部分 Android ROM 在 Activity 恢复后会释放 Wi-Fi 组播接收能力。
         acquireMulticastLock()
+        stopService(Intent(this, TransferForegroundService::class.java))
+    }
+
+    override fun onPause() {
+        // A foreground service keeps the Flutter/Rust process alive while Android
+        // moves the Activity to the background during a long file transfer.
+        try {
+            val serviceIntent = Intent(this, TransferForegroundService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("Lunote", "无法启动后台传输服务: ${e.message}")
+        }
+        super.onPause()
     }
 
     private fun acquireMulticastLock() {
