@@ -550,6 +550,21 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
+  Future<String?> deleteTransferRecords(Iterable<String> transferIds) async {
+    final ids = transferIds.toSet().toList();
+    if (ids.isEmpty) return null;
+    final r = await core.call('delete_transfer_records', {'transfer_ids': ids});
+    if (r['ok'] != true) {
+      return r['error'] as String? ?? '删除传输记录失败';
+    }
+    allTransfers.removeWhere((t) => ids.contains(t.transferId));
+    for (final entry in conversationTransfers.entries) {
+      entry.value.removeWhere((t) => ids.contains(t.transferId));
+    }
+    notifyListeners();
+    return null;
+  }
+
   /// 返回实际接收目录；未自定义时解析核心数据目录下的 downloads。
   Future<String?> resolvedDownloadDir() async {
     final configured = defaultDownloadDir;

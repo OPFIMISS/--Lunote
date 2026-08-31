@@ -24,6 +24,39 @@ class TransfersPage extends StatefulWidget {
 class _TransfersPageState extends State<TransfersPage> {
   TransferCategory _category = TransferCategory.all;
   String _status = 'all';
+  final Set<String> _selectedTransferIds = {};
+  bool _selectionMode = false;
+
+  bool _canDelete(TransferItem t) =>
+      !t.isOffered && !t.isInProgress && !t.isPaused;
+
+  void _toggleSelection(TransferItem t) {
+    if (!_canDelete(t)) return;
+    setState(() {
+      _selectionMode = true;
+      if (!_selectedTransferIds.add(t.transferId)) {
+        _selectedTransferIds.remove(t.transferId);
+      }
+      if (_selectedTransferIds.isEmpty) _selectionMode = false;
+    });
+  }
+
+  Future<void> _deleteSelected(BuildContext context, AppState state) async {
+    final ids = _selectedTransferIds.toList();
+    final error = await state.deleteTransferRecords(ids);
+    if (!context.mounted) return;
+    if (error != null) {
+      _showError(context, error);
+      return;
+    }
+    setState(() {
+      _selectedTransferIds.clear();
+      _selectionMode = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已删除 ${ids.length} 条传输记录')),
+    );
+  }
 
   void _showError(BuildContext context, String? error) {
     if (error != null && context.mounted) {
@@ -107,15 +140,53 @@ class _TransfersPageState extends State<TransfersPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 4),
-          child: Text(
-            '传输',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
-              color: cc.moon,
-            ),
-          ),
+          padding: const EdgeInsets.fromLTRB(24, 12, 16, 4),
+          child: _selectionMode
+              ? Row(
+                  children: [
+                    IconButton(
+                      tooltip: '退出选择',
+                      onPressed: () => setState(() {
+                        _selectionMode = false;
+                        _selectedTransferIds.clear();
+                      }),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                    Expanded(child: Text('已选择 ${_selectedTransferIds.length} 项')),
+                    TextButton(
+                      onPressed: () => setState(() {
+                        _selectedTransferIds
+                          ..clear()
+                          ..addAll(list.where(_canDelete).map((t) => t.transferId));
+                      }),
+                      child: const Text('全选'),
+                    ),
+                    IconButton(
+                      tooltip: '删除记录',
+                      onPressed: _selectedTransferIds.isEmpty
+                          ? null
+                          : () => _deleteSelected(context, state),
+                      icon: Icon(Icons.delete_outline_rounded, color: cc.warn),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '传输',
+                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: cc.moon),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '管理传输记录',
+                      onPressed: list.any(_canDelete)
+                          ? () => setState(() => _selectionMode = true)
+                          : null,
+                      icon: const Icon(Icons.checklist_rounded),
+                    ),
+                  ],
+                ),
         ),
         if (offered.length > 1)
           Padding(
@@ -216,11 +287,20 @@ class _TransfersPageState extends State<TransfersPage> {
                         t.localPath != null &&
                         isPreviewableImage(t.fileName) &&
                         File(t.localPath!).existsSync();
+                    final selected = _selectedTransferIds.contains(t.transferId);
                     return TimelineEntrance(
                       key: ValueKey(t.transferId),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onLongPress: _canDelete(t) ? () => _toggleSelection(t) : null,
+                        onTap: _selectionMode && _canDelete(t) ? () => _toggleSelection(t) : null,
+                        child: Stack(
+                          children: [
+                            AbsorbPointer(
+                              absorbing: _selectionMode,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
                           Padding(
                             padding: const EdgeInsets.fromLTRB(24, 6, 24, 0),
                             child: Text(
@@ -231,7 +311,7 @@ class _TransfersPageState extends State<TransfersPage> {
                               ),
                             ),
                           ),
-                          TransferTile(
+                                  TransferTile(
                             transfer: t,
                             onPreview: canPreview
                                 ? () => _preview(context, t)
@@ -306,8 +386,21 @@ class _TransfersPageState extends State<TransfersPage> {
                                 );
                               }
                             },
-                          ),
-                        ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (_selectionMode && _canDelete(t))
+                              Positioned(
+                                right: 28,
+                                top: 14,
+                                child: Checkbox(
+                                  value: selected,
+                                  onChanged: (_) => _toggleSelection(t),
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                     );
                   },

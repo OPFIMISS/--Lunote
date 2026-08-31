@@ -24,7 +24,7 @@ flutter analyze --no-pub
 flutter build apk --release --no-pub
 ```
 
-The current Android application version is **1.4.0 (5)**. The application id and signing configuration remain unchanged so release APKs can be updated in place.
+The current Android application version is **1.4.1 (6)**. The application id and signing configuration remain unchanged so release APKs can be updated in place.
 
 ## Privacy and security
 
@@ -50,4 +50,4 @@ See `docs/协议.md`, `docs/安全模型.md`, and `docs/交付报告.md` for the
 
 Use tools/publish_github_release.ps1 to verify and upload the tagged APK and release notes after running gh auth login.
 
-Current stable release: [v1.4.0](https://github.com/OPFIMISS/--Lunote/releases/tag/v1.4.0), including `Lunote-1.4.0.apk`, the Windows executable, and a complete Windows x64 archive.
+Current stable release: [v1.4.1](https://github.com/OPFIMISS/--Lunote/releases/tag/v1.4.1), including `Lunote-1.4.1.apk`, the Windows executable, and a complete Windows x64 archive.

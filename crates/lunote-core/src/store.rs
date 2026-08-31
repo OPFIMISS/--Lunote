@@ -427,6 +427,20 @@ impl Store {
         Ok(())
     }
 
+    /// 删除指定的终态传输记录，不影响消息和对话索引。
+    pub fn delete_transfer_records(&self, transfer_ids: &[String]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        for transfer_id in transfer_ids {
+            tx.execute(
+                "DELETE FROM transfers WHERE transfer_id=?1",
+                params![transfer_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// 导出：密码 → Argon2id → AES-256-GCM 信封（仅消息与传输记录，不含文件本体）
     pub fn export(&self, password: &str, out_path: &Path) -> Result<ExportReport> {
         if password.len() < 8 {
@@ -806,6 +820,18 @@ mod tests {
             .unwrap();
         store.wipe().unwrap();
         assert!(store.list_conversations().unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_transfer_records_removes_only_selected_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        store.append_transfer(&sample_info("t1", "dev-a")).unwrap();
+        store.append_transfer(&sample_info("t2", "dev-a")).unwrap();
+        store.delete_transfer_records(&["t1".into()]).unwrap();
+        let transfers = store.list_transfers("dev-a").unwrap();
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(transfers[0].transfer_id, "t2");
     }
 
     #[test]

@@ -356,6 +356,21 @@ fn dispatch(runtime: &Runtime, rt: &tokio::runtime::Runtime, cmd_json: &str) -> 
             runtime.delete_conversations(&ids)?;
             ok("")
         }
+        "delete_transfer_records" => {
+            let ids = v
+                .get("transfer_ids")
+                .and_then(|x| x.as_array())
+                .ok_or_else(|| anyhow!("transfer_ids 必须是数组"))?
+                .iter()
+                .map(|x| {
+                    x.as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| anyhow!("transfer_ids 只能包含字符串"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            runtime.delete_transfer_records(&ids)?;
+            ok("")
+        }
         "identity" => ok(&format!(
             ",\"device_id\":\"{}\",\"name\":\"{}\",\"instance_id\":\"{}\"",
             runtime.identity.device_id,

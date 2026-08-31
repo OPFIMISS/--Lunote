@@ -424,6 +424,28 @@ impl Runtime {
         Ok(())
     }
 
+    /// 删除传输历史；活动任务必须先取消，避免 UI 与核心状态脱节。
+    pub fn delete_transfer_records(&self, transfer_ids: &[String]) -> Result<()> {
+        let active = self.transfers.list();
+        for id in transfer_ids {
+            if let Some(t) = active.iter().find(|t| &t.transfer_id == id) {
+                let state = t.state;
+                if matches!(
+                    state,
+                    crate::events::TransferState::Offered
+                        | crate::events::TransferState::Accepted
+                        | crate::events::TransferState::InProgress
+                        | crate::events::TransferState::Paused
+                ) {
+                    anyhow::bail!("活动传输不能删除，请先取消或等待结束: {}", id);
+                }
+            }
+        }
+        self.store.delete_transfer_records(transfer_ids)?;
+        self.bus.emit(CoreEvent::RecordsChanged);
+        Ok(())
+    }
+
     // ---------- 后台节流 ----------
 
     pub fn set_background(&self, bg: bool) {

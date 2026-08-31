@@ -316,6 +316,15 @@ impl TransferManager {
             .lock()
             .unwrap()
             .insert(transfer_id.to_string(), true);
+        if let Some(state) = self.outgoing.lock().unwrap().get_mut(transfer_id) {
+            if matches!(
+                state.state,
+                TransferState::Accepted | TransferState::InProgress
+            ) {
+                state.state = TransferState::Paused;
+                self.emit_update(state.into_info());
+            }
+        }
         Ok(())
     }
 
@@ -327,6 +336,12 @@ impl TransferManager {
             .lock()
             .unwrap()
             .insert(transfer_id.to_string(), false);
+        if let Some(state) = self.outgoing.lock().unwrap().get_mut(transfer_id) {
+            if state.state == TransferState::Paused {
+                state.state = TransferState::InProgress;
+                self.emit_update(state.into_info());
+            }
+        }
         Ok(())
     }
 
