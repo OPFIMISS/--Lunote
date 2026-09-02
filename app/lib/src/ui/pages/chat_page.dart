@@ -330,6 +330,9 @@ class _ChatPageState extends State<ChatPage> {
                                     onLongPress: () => _toggleMessageSelection(
                                       entry.message!.id,
                                     ),
+                                    selected: _selectedMessages.contains(
+                                      entry.message!.id,
+                                    ),
                                   )
                                 : _transferBubble(state, entry.transfer!);
                             final id =
@@ -414,6 +417,7 @@ class _ChatPageState extends State<ChatPage> {
     return TransferTile(
       transfer: transfer,
       onLongPress: () => _toggleTransferSelection(transfer.transferId),
+      selected: _selectedTransfers.contains(transfer.transferId),
       compact: true,
       imagePreviewEnabled: state.imagePreviewEnabled,
       onPreview: canPreview ? () => _previewTransfer(transfer) : null,

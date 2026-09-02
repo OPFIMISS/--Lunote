@@ -25,6 +25,7 @@ class TransferTile extends StatelessWidget {
     this.onOpenFolder,
     this.onPreview,
     this.onLongPress,
+    this.selected = false,
     this.imagePreviewEnabled = true,
     this.compact = false,
   });
@@ -40,6 +41,7 @@ class TransferTile extends StatelessWidget {
   final VoidCallback? onOpenFolder;
   final VoidCallback? onPreview;
   final VoidCallback? onLongPress;
+  final bool selected;
   final bool compact;
   final bool imagePreviewEnabled;
 
@@ -223,7 +225,25 @@ class TransferTile extends StatelessWidget {
       ),
     );
 
-    final wrapped = GestureDetector(onLongPress: onLongPress, child: bubble);
+    final wrapped = GestureDetector(
+      onLongPress: onLongPress,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          bubble,
+          if (selected)
+            const Positioned(
+              top: -5,
+              right: -5,
+              child: Icon(
+                Icons.check_circle_rounded,
+                size: 22,
+                color: Colors.amber,
+              ),
+            ),
+        ],
+      ),
+    );
     if (!compact) return wrapped;
     return Align(
       alignment: t.isOutgoing ? Alignment.centerRight : Alignment.centerLeft,
