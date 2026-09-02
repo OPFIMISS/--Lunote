@@ -552,6 +552,18 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
+  Future<String?> deleteMessages(Iterable<String> messageIds) async {
+    final ids = messageIds.toSet().toList();
+    if (ids.isEmpty) return null;
+    final r = await core.call('delete_messages', {'message_ids': ids});
+    if (r['ok'] != true) return r['error'] as String? ?? '删除失败';
+    for (final entry in messages.entries) {
+      entry.value.removeWhere((m) => ids.contains(m.id));
+    }
+    notifyListeners();
+    return null;
+  }
+
   Future<String?> deleteTransferRecords(Iterable<String> transferIds) async {
     final ids = transferIds.toSet().toList();
     if (ids.isEmpty) return null;

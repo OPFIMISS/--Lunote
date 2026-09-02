@@ -430,6 +430,12 @@ impl Runtime {
         Ok(())
     }
 
+    pub fn delete_messages(&self, message_ids: &[String]) -> Result<()> {
+        self.store.delete_messages(message_ids)?;
+        self.bus.emit(CoreEvent::RecordsChanged);
+        Ok(())
+    }
+
     /// 删除传输历史；活动任务必须先取消，避免 UI 与核心状态脱节。
     pub fn delete_transfer_records(&self, transfer_ids: &[String]) -> Result<()> {
         let active = self.transfers.list();

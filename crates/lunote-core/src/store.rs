@@ -427,6 +427,16 @@ impl Store {
         Ok(())
     }
 
+    pub fn delete_messages(&self, message_ids: &[String]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        for message_id in message_ids {
+            tx.execute("DELETE FROM messages WHERE id=?1", params![message_id])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// 删除指定的终态传输记录，不影响消息和对话索引。
     pub fn delete_transfer_records(&self, transfer_ids: &[String]) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();

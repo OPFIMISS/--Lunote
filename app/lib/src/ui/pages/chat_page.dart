@@ -36,6 +36,8 @@ class _ChatPageState extends State<ChatPage> {
   final FocusNode _inputFocus = FocusNode();
   final ScrollController _scroll = ScrollController();
   bool _dragging = false;
+  bool _messageSelectionMode = false;
+  final Set<String> _selectedMessages = {};
   int _lastTimelineLength = -1;
 
   @override
@@ -261,7 +263,9 @@ class _ChatPageState extends State<ChatPage> {
       color: cc.night, // 自带背景：push 路由与内嵌模式都避免黑屏
       child: Column(
         children: [
-          _header(context, name, online, trusted),
+          _messageSelectionMode
+              ? _messageSelectionHeader(context)
+              : _header(context, name, online, trusted),
           Expanded(
             child: DropTarget(
               onDragEntered: (_) => setState(() => _dragging = true),
@@ -322,6 +326,9 @@ class _ChatPageState extends State<ChatPage> {
                                     peerName: name,
                                     imagePreviewEnabled:
                                         state.imagePreviewEnabled,
+                                    onLongPress: () => _toggleMessageSelection(
+                                      entry.message!.id,
+                                    ),
                                   )
                                 : _transferBubble(state, entry.transfer!);
                             final id =
@@ -464,6 +471,81 @@ class _ChatPageState extends State<ChatPage> {
         }
       },
     );
+  }
+
+  void _toggleMessageSelection(String id) {
+    setState(() {
+      _messageSelectionMode = true;
+      if (!_selectedMessages.add(id)) _selectedMessages.remove(id);
+      if (_selectedMessages.isEmpty) _messageSelectionMode = false;
+    });
+  }
+
+  Widget _messageSelectionHeader(BuildContext context) {
+    final cc = LunoteColors.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      color: cc.nightRaised,
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: '退出选择',
+            onPressed: () => setState(() {
+              _selectedMessages.clear();
+              _messageSelectionMode = false;
+            }),
+            icon: Icon(Icons.close_rounded, color: cc.moonDim),
+          ),
+          Expanded(
+            child: Text(
+              '已选择 ${_selectedMessages.length} 条消息',
+              style: TextStyle(color: cc.moon, fontWeight: FontWeight.w700),
+            ),
+          ),
+          IconButton(
+            tooltip: '删除所选消息',
+            onPressed: _selectedMessages.isEmpty
+                ? null
+                : _deleteSelectedMessages,
+            icon: Icon(Icons.delete_sweep_rounded, color: cc.warn),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteSelectedMessages() async {
+    final ids = _selectedMessages.toList();
+    if (ids.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(ids.length == 1 ? '删除消息？' : '删除 ${ids.length} 条消息？'),
+        content: const Text('删除后仅影响本地记录，不会撤回对方已收到的消息。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final error = await context.read<AppState>().deleteMessages(ids);
+    if (!mounted) return;
+    if (error != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error)));
+    } else {
+      setState(() {
+        _selectedMessages.clear();
+        _messageSelectionMode = false;
+      });
+    }
   }
 
   Widget _header(BuildContext context, String name, bool online, bool trusted) {

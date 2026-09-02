@@ -361,6 +361,21 @@ fn dispatch(runtime: &Runtime, rt: &tokio::runtime::Runtime, cmd_json: &str) -> 
             runtime.delete_conversations(&ids)?;
             ok("")
         }
+        "delete_messages" => {
+            let ids = v
+                .get("message_ids")
+                .and_then(|x| x.as_array())
+                .ok_or_else(|| anyhow!("message_ids 必须是数组"))?
+                .iter()
+                .map(|x| {
+                    x.as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| anyhow!("message_ids 只能包含字符串"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            runtime.delete_messages(&ids)?;
+            ok("")
+        }
         "delete_transfer_records" => {
             let ids = v
                 .get("transfer_ids")
