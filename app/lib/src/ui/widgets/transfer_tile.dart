@@ -24,6 +24,7 @@ class TransferTile extends StatelessWidget {
     this.onOpen,
     this.onOpenFolder,
     this.onPreview,
+    this.onLongPress,
     this.imagePreviewEnabled = true,
     this.compact = false,
   });
@@ -38,6 +39,7 @@ class TransferTile extends StatelessWidget {
   final VoidCallback? onOpen;
   final VoidCallback? onOpenFolder;
   final VoidCallback? onPreview;
+  final VoidCallback? onLongPress;
   final bool compact;
   final bool imagePreviewEnabled;
 
@@ -221,10 +223,11 @@ class TransferTile extends StatelessWidget {
       ),
     );
 
-    if (!compact) return bubble;
+    final wrapped = GestureDetector(onLongPress: onLongPress, child: bubble);
+    if (!compact) return wrapped;
     return Align(
       alignment: t.isOutgoing ? Alignment.centerRight : Alignment.centerLeft,
-      child: bubble,
+      child: wrapped,
     );
   }
 
@@ -270,7 +273,9 @@ class TransferTile extends StatelessWidget {
       actions.add(_button(cc, Icons.stop_rounded, '取消', onCancel));
     }
     if (transfer.isPaused && onResume != null) {
-      actions.add(_button(cc, Icons.play_arrow_rounded, '继续', onResume!, primary: true));
+      actions.add(
+        _button(cc, Icons.play_arrow_rounded, '继续', onResume!, primary: true),
+      );
       actions.add(_button(cc, Icons.stop_rounded, '取消', onCancel));
     }
     if (transfer.isFailed && transfer.isOutgoing) {

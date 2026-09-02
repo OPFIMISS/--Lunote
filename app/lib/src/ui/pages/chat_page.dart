@@ -38,6 +38,7 @@ class _ChatPageState extends State<ChatPage> {
   bool _dragging = false;
   bool _messageSelectionMode = false;
   final Set<String> _selectedMessages = {};
+  final Set<String> _selectedTransfers = {};
   int _lastTimelineLength = -1;
 
   @override
@@ -412,6 +413,7 @@ class _ChatPageState extends State<ChatPage> {
         File(transfer.localPath!).existsSync();
     return TransferTile(
       transfer: transfer,
+      onLongPress: () => _toggleTransferSelection(transfer.transferId),
       compact: true,
       imagePreviewEnabled: state.imagePreviewEnabled,
       onPreview: canPreview ? () => _previewTransfer(transfer) : null,
@@ -481,6 +483,16 @@ class _ChatPageState extends State<ChatPage> {
     });
   }
 
+  void _toggleTransferSelection(String id) {
+    setState(() {
+      _messageSelectionMode = true;
+      if (!_selectedTransfers.add(id)) _selectedTransfers.remove(id);
+      if (_selectedMessages.isEmpty && _selectedTransfers.isEmpty) {
+        _messageSelectionMode = false;
+      }
+    });
+  }
+
   Widget _messageSelectionHeader(BuildContext context) {
     final cc = LunoteColors.of(context);
     return Container(
@@ -492,19 +504,20 @@ class _ChatPageState extends State<ChatPage> {
             tooltip: '退出选择',
             onPressed: () => setState(() {
               _selectedMessages.clear();
+              _selectedTransfers.clear();
               _messageSelectionMode = false;
             }),
             icon: Icon(Icons.close_rounded, color: cc.moonDim),
           ),
           Expanded(
             child: Text(
-              '已选择 ${_selectedMessages.length} 条消息',
+              '已选择 ${_selectedMessages.length + _selectedTransfers.length} 项',
               style: TextStyle(color: cc.moon, fontWeight: FontWeight.w700),
             ),
           ),
           IconButton(
             tooltip: '删除所选消息',
-            onPressed: _selectedMessages.isEmpty
+            onPressed: (_selectedMessages.isEmpty && _selectedTransfers.isEmpty)
                 ? null
                 : _deleteSelectedMessages,
             icon: Icon(Icons.delete_sweep_rounded, color: cc.warn),
@@ -515,13 +528,30 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _deleteSelectedMessages() async {
-    final ids = _selectedMessages.toList();
-    if (ids.isEmpty) return;
+    final messageIds = _selectedMessages.toList();
+    final transferIds = _selectedTransfers.toList();
+    if (messageIds.isEmpty && transferIds.isEmpty) return;
+    var deleteFiles = false;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(ids.length == 1 ? '删除消息？' : '删除 ${ids.length} 条消息？'),
-        content: const Text('删除后仅影响本地记录，不会撤回对方已收到的消息。'),
+        title: Text('删除 ${messageIds.length + transferIds.length} 项？'),
+        content: StatefulBuilder(
+          builder: (ctx, setDialogState) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('消息删除后不会撤回对方已收到的内容。'),
+              if (transferIds.isNotEmpty)
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: deleteFiles,
+                  onChanged: (value) =>
+                      setDialogState(() => deleteFiles = value ?? false),
+                  title: const Text('同时删除已下载的本地文件'),
+                ),
+            ],
+          ),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -535,14 +565,31 @@ class _ChatPageState extends State<ChatPage> {
       ),
     );
     if (ok != true || !mounted) return;
-    final error = await context.read<AppState>().deleteMessages(ids);
+    final state = context.read<AppState>();
+    final paths = state
+        .transfersOf(widget.deviceId)
+        .where((t) => transferIds.contains(t.transferId))
+        .map((t) => t.localPath)
+        .whereType<String>()
+        .toList();
+    final error = await state.deleteMessages(messageIds);
+    final transferError =
+        error ?? await state.deleteTransferRecords(transferIds);
     if (!mounted) return;
-    if (error != null) {
+    if (transferError != null) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
+          .showSnackBar(SnackBar(content: Text(transferError)));
     } else {
+      if (deleteFiles) {
+        for (final path in paths) {
+          try {
+            await File(path).delete();
+          } catch (_) {}
+        }
+      }
       setState(() {
         _selectedMessages.clear();
+        _selectedTransfers.clear();
         _messageSelectionMode = false;
       });
     }
