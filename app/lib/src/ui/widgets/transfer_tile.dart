@@ -24,6 +24,7 @@ class TransferTile extends StatelessWidget {
     this.onOpen,
     this.onOpenFolder,
     this.onPreview,
+    this.imagePreviewEnabled = true,
     this.compact = false,
   });
 
@@ -38,6 +39,7 @@ class TransferTile extends StatelessWidget {
   final VoidCallback? onOpenFolder;
   final VoidCallback? onPreview;
   final bool compact;
+  final bool imagePreviewEnabled;
 
   String get _stateLabel {
     switch (transfer.state) {
@@ -84,6 +86,7 @@ class TransferTile extends StatelessWidget {
     final canPreview =
         t.isDone &&
         t.localPath != null &&
+        imagePreviewEnabled &&
         isPreviewableImage(t.fileName) &&
         File(t.localPath!).existsSync();
     final screenWidth = MediaQuery.sizeOf(context).width;

@@ -64,6 +64,7 @@ pub struct Runtime {
     pub downloads_dir_setting: Mutex<Option<PathBuf>>,
     /// 主题（"dark"/"light"/"system"；settings.json 持久化，默认 "dark"）
     pub theme_setting: Mutex<String>,
+    pub image_preview_setting: Mutex<bool>,
     pub conflict_setting: Mutex<ConflictPolicy>,
     pub receive_tree_uri: Mutex<Option<String>>,
     pub pin_hash: Mutex<Option<String>>,
@@ -95,6 +96,7 @@ impl Runtime {
         let mut auto_trust_enabled = true;
         let mut downloads_dir_setting: Option<PathBuf> = None;
         let mut theme_setting = "dark".to_string();
+        let mut image_preview_enabled = true;
         let mut conflict_setting = ConflictPolicy::Rename;
         let mut receive_tree_uri: Option<String> = None;
         let mut pin_hash: Option<String> = None;
@@ -113,6 +115,9 @@ impl Runtime {
                     if matches!(t, "dark" | "light" | "system" | "glass") {
                         theme_setting = t.to_string();
                     }
+                }
+                if let Some(enabled) = v.get("image_preview").and_then(|x| x.as_bool()) {
+                    image_preview_enabled = enabled;
                 }
                 if let Some(c) = v.get("conflict").and_then(|x| x.as_str()) {
                     conflict_setting = match c {
@@ -205,6 +210,7 @@ impl Runtime {
             auto_trust,
             downloads_dir_setting,
             theme_setting,
+            image_preview_setting: Mutex::new(image_preview_enabled),
             conflict_setting: Mutex::new(conflict_setting),
             receive_tree_uri: Mutex::new(receive_tree_uri),
             pin_hash: Mutex::new(pin_hash),
@@ -464,6 +470,7 @@ impl Runtime {
             "auto_trust": self.auto_trust_enabled(),
             "downloads_dir": self.downloads_dir_setting.lock().unwrap().as_ref().map(|p| p.to_string_lossy().to_string()),
             "theme": self.theme_setting.lock().unwrap().clone(),
+            "image_preview": self.image_preview_enabled(),
             "conflict": match *self.conflict_setting.lock().unwrap() { ConflictPolicy::Rename => "rename", ConflictPolicy::Overwrite => "overwrite", ConflictPolicy::Skip => "skip" },
             "receive_tree_uri": self.receive_tree_uri.lock().unwrap().clone(),
             "pin_enabled": self.pin_hash.lock().unwrap().is_some(),
@@ -542,6 +549,20 @@ impl Runtime {
         };
         if let Err(error) = self.write_settings(serde_json::json!({ "theme": t })) {
             *self.theme_setting.lock().unwrap() = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn image_preview_enabled(&self) -> bool {
+        *self.image_preview_setting.lock().unwrap()
+    }
+
+    pub fn set_image_preview(&self, enabled: bool) -> Result<()> {
+        let previous = self.image_preview_enabled();
+        *self.image_preview_setting.lock().unwrap() = enabled;
+        if let Err(error) = self.write_settings(serde_json::json!({"image_preview": enabled})) {
+            *self.image_preview_setting.lock().unwrap() = previous;
             return Err(error);
         }
         Ok(())

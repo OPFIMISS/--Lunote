@@ -77,6 +77,17 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  Future<void> _pickGallery() async {
+    const images = XTypeGroup(
+      label: '图片',
+      extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic'],
+    );
+    final result = await openFiles(acceptedTypeGroups: [images]);
+    for (final f in result) {
+      await _sendPath(f.path);
+    }
+  }
+
   Future<void> _pickFolder() async {
     final dir = Platform.isAndroid
         ? await PlatformFiles.pickFolderForTransfer()
@@ -309,6 +320,8 @@ class _ChatPageState extends State<ChatPage> {
                                 ? MessageBubble(
                                     message: entry.message!,
                                     peerName: name,
+                                    imagePreviewEnabled:
+                                        state.imagePreviewEnabled,
                                   )
                                 : _transferBubble(state, entry.transfer!);
                             final id =
@@ -387,11 +400,13 @@ class _ChatPageState extends State<ChatPage> {
     final canPreview =
         transfer.isDone &&
         transfer.localPath != null &&
+        state.imagePreviewEnabled &&
         isPreviewableImage(transfer.fileName) &&
         File(transfer.localPath!).existsSync();
     return TransferTile(
       transfer: transfer,
       compact: true,
+      imagePreviewEnabled: state.imagePreviewEnabled,
       onPreview: canPreview ? () => _previewTransfer(transfer) : null,
       onOpen: transfer.localPath == null
           ? null
@@ -418,7 +433,8 @@ class _ChatPageState extends State<ChatPage> {
           ? () async {
               final error = await state.pauseTransfer(transfer.transferId);
               if (error != null && mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(SnackBar(content: Text(error)));
               }
             }
           : null,
@@ -426,7 +442,8 @@ class _ChatPageState extends State<ChatPage> {
           ? () async {
               final error = await state.resumeTransfer(transfer.transferId);
               if (error != null && mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(SnackBar(content: Text(error)));
               }
             }
           : null,
@@ -554,6 +571,14 @@ class _ChatPageState extends State<ChatPage> {
             onTap: _pickFolder,
             child: _iconBtn(Icons.folder_rounded, '文件夹'),
           ),
+          if (Platform.isAndroid) ...[
+            const SizedBox(width: 6),
+            SpringButton(
+              weight: SpringWeight.icon,
+              onTap: _pickGallery,
+              child: _iconBtn(Icons.photo_library_rounded, '打开相册'),
+            ),
+          ],
           const SizedBox(width: 6),
           SpringButton(
             weight: SpringWeight.icon,
@@ -569,19 +594,26 @@ class _ChatPageState extends State<ChatPage> {
                 borderRadius: BorderRadius.circular(22),
                 border: Border.all(color: cc.nightSoft),
               ),
-              child: TextField(
-                controller: _input,
-                focusNode: _inputFocus,
-                maxLines: 1,
-                minLines: 1,
-                style: TextStyle(fontSize: 14, color: cc.moon),
-                decoration: InputDecoration(
-                  border: InputBorder.none,
-                  hintText: '输入消息…（自动识别链接）',
-                  hintStyle: TextStyle(color: cc.moonDim, fontSize: 13.5),
-                  isDense: true,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 132),
+                child: Scrollbar(
+                  child: TextField(
+                    controller: _input,
+                    focusNode: _inputFocus,
+                    maxLines: 5,
+                    minLines: 1,
+                    keyboardType: TextInputType.multiline,
+                    textInputAction: TextInputAction.newline,
+                    style: TextStyle(fontSize: 14, color: cc.moon),
+                    decoration: InputDecoration(
+                      border: InputBorder.none,
+                      hintText: '输入消息…（自动识别链接）',
+                      hintStyle: TextStyle(color: cc.moonDim, fontSize: 13.5),
+                      isDense: true,
+                    ),
+                    onSubmitted: (_) => _sendText(),
+                  ),
                 ),
-                onSubmitted: (_) => _sendText(),
               ),
             ),
           ),

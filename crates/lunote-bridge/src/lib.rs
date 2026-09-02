@@ -299,6 +299,11 @@ fn dispatch(runtime: &Runtime, rt: &tokio::runtime::Runtime, cmd_json: &str) -> 
             runtime.set_theme(theme)?;
             ok("")
         }
+        "set_image_preview" => {
+            let enabled = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(true);
+            runtime.set_image_preview(enabled)?;
+            ok("")
+        }
         "set_conflict_policy" => {
             let policy = v.get("policy").and_then(|x| x.as_str()).unwrap_or("rename");
             runtime.set_conflict_policy(policy)?;

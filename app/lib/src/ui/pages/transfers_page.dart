@@ -53,9 +53,8 @@ class _TransfersPageState extends State<TransfersPage> {
       _selectedTransferIds.clear();
       _selectionMode = false;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已删除 ${ids.length} 条传输记录')),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('已删除 ${ids.length} 条传输记录')));
   }
 
   void _showError(BuildContext context, String? error) {
@@ -84,7 +83,8 @@ class _TransfersPageState extends State<TransfersPage> {
   }
 
   bool _matchesStatus(TransferItem transfer) => switch (_status) {
-    'active' => transfer.isOffered || transfer.isInProgress || transfer.isPaused,
+    'active' =>
+      transfer.isOffered || transfer.isInProgress || transfer.isPaused,
     'done' => transfer.isDone,
     'failed' =>
       transfer.isFailed || transfer.isCanceled || transfer.state == 'rejected',
@@ -105,7 +105,11 @@ class _TransfersPageState extends State<TransfersPage> {
     return state.acceptTransfer(t.transferId, dir);
   }
 
-  Future<void> _acceptAll(BuildContext context, AppState state, List<TransferItem> offered) async {
+  Future<void> _acceptAll(
+    BuildContext context,
+    AppState state,
+    List<TransferItem> offered,
+  ) async {
     final dir = await _resolveReceiveDirectory(state);
     if (dir == null || dir.isEmpty) return;
     for (final transfer in offered) {
@@ -116,9 +120,8 @@ class _TransfersPageState extends State<TransfersPage> {
       }
     }
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已一键接收 ${offered.length} 个文件')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('已一键接收 ${offered.length} 个文件')));
     }
   }
 
@@ -152,12 +155,16 @@ class _TransfersPageState extends State<TransfersPage> {
                       }),
                       icon: const Icon(Icons.close_rounded),
                     ),
-                    Expanded(child: Text('已选择 ${_selectedTransferIds.length} 项')),
+                    Expanded(
+                      child: Text('已选择 ${_selectedTransferIds.length} 项'),
+                    ),
                     TextButton(
                       onPressed: () => setState(() {
                         _selectedTransferIds
                           ..clear()
-                          ..addAll(list.where(_canDelete).map((t) => t.transferId));
+                          ..addAll(
+                            list.where(_canDelete).map((t) => t.transferId),
+                          );
                       }),
                       child: const Text('全选'),
                     ),
@@ -175,7 +182,11 @@ class _TransfersPageState extends State<TransfersPage> {
                     Expanded(
                       child: Text(
                         '传输',
-                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: cc.moon),
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                          color: cc.moon,
+                        ),
                       ),
                     ),
                     IconButton(
@@ -205,13 +216,72 @@ class _TransfersPageState extends State<TransfersPage> {
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(color: cc.nightRaised, borderRadius: BorderRadius.circular(10), border: Border.all(color: cc.nightSoft)),
+              decoration: BoxDecoration(
+                color: cc.nightRaised,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: cc.nightSoft),
+              ),
               child: Row(
                 children: [
-                  Expanded(child: Text('任务组 · ${active.length} 个文件 · ${_size(totalBytes)} · ${totalBytes == 0 ? 0 : (doneBytes * 100 / totalBytes).round()}%', style: TextStyle(fontSize: 11.5, color: cc.moon))),
-                  IconButton(tooltip: '暂停全部', onPressed: () async { final e = await state.pauseTransfers(active.where((t) => t.isInProgress).map((t) => t.transferId)); if (e != null && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e))); }, icon: const Icon(Icons.pause_circle_outline_rounded, size: 20)),
-                  IconButton(tooltip: '继续全部', onPressed: () async { final e = await state.resumeTransfers(active.where((t) => t.isPaused).map((t) => t.transferId)); if (e != null && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e))); }, icon: const Icon(Icons.play_circle_outline_rounded, size: 20)),
-                  IconButton(tooltip: '取消全部', onPressed: () async { final e = await state.cancelTransfers(active.map((t) => t.transferId)); if (e != null && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e))); }, icon: Icon(Icons.stop_circle_outlined, size: 20, color: cc.warn)),
+                  Expanded(
+                    child: Text(
+                      '任务组 · ${active.length} 个文件 · ${_size(totalBytes)} · ${totalBytes == 0 ? 0 : (doneBytes * 100 / totalBytes).round()}%',
+                      style: TextStyle(fontSize: 11.5, color: cc.moon),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '暂停全部',
+                    onPressed: () async {
+                      final e = await state.pauseTransfers(
+                        active
+                            .where((t) => t.isInProgress)
+                            .map((t) => t.transferId),
+                      );
+                      if (e != null && context.mounted) {
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(SnackBar(content: Text(e)));
+                      }
+                    },
+                    icon: const Icon(
+                      Icons.pause_circle_outline_rounded,
+                      size: 20,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '继续全部',
+                    onPressed: () async {
+                      final e = await state.resumeTransfers(
+                        active
+                            .where((t) => t.isPaused)
+                            .map((t) => t.transferId),
+                      );
+                      if (e != null && context.mounted) {
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(SnackBar(content: Text(e)));
+                      }
+                    },
+                    icon: const Icon(
+                      Icons.play_circle_outline_rounded,
+                      size: 20,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '取消全部',
+                    onPressed: () async {
+                      final e = await state.cancelTransfers(
+                        active.map((t) => t.transferId),
+                      );
+                      if (e != null && context.mounted) {
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(SnackBar(content: Text(e)));
+                      }
+                    },
+                    icon: Icon(
+                      Icons.stop_circle_outlined,
+                      size: 20,
+                      color: cc.warn,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -285,15 +355,22 @@ class _TransfersPageState extends State<TransfersPage> {
                     final canPreview =
                         t.isDone &&
                         t.localPath != null &&
+                        state.imagePreviewEnabled &&
                         isPreviewableImage(t.fileName) &&
                         File(t.localPath!).existsSync();
-                    final selected = _selectedTransferIds.contains(t.transferId);
+                    final selected = _selectedTransferIds.contains(
+                      t.transferId,
+                    );
                     return TimelineEntrance(
                       key: ValueKey(t.transferId),
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onLongPress: _canDelete(t) ? () => _toggleSelection(t) : null,
-                        onTap: _selectionMode && _canDelete(t) ? () => _toggleSelection(t) : null,
+                        onLongPress: _canDelete(t)
+                            ? () => _toggleSelection(t)
+                            : null,
+                        onTap: _selectionMode && _canDelete(t)
+                            ? () => _toggleSelection(t)
+                            : null,
                         child: Stack(
                           children: [
                             AbsorbPointer(
@@ -301,91 +378,127 @@ class _TransfersPageState extends State<TransfersPage> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(24, 6, 24, 0),
-                            child: Text(
-                              '${t.isOutgoing ? '发送给' : '来自'} $peerName',
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                color: cc.moonDim,
-                              ),
-                            ),
-                          ),
-                                  TransferTile(
-                            transfer: t,
-                            onPreview: canPreview
-                                ? () => _preview(context, t)
-                                : null,
-                            onOpen: t.localPath == null
-                                ? null
-                                : () => _openFile(context, t),
-                            onOpenFolder: t.localPath == null
-                                ? null
-                                : () => _openFolder(context, t),
-                            onAccept: () async {
-                              final dir = await _resolveReceiveDirectory(state);
-                              if (dir == null || dir.isEmpty) return;
-                              final err = await _acceptOne(state, t, dir);
-                              if (err != null && context.mounted) _showError(context, err);
-                            },
-                            onReject: () async {
-                              final err = await state.rejectTransfer(
-                                t.transferId,
-                                '用户拒绝',
-                              );
-                              if (err != null && context.mounted) {
-                                ScaffoldMessenger.of(context)
-                                    .showSnackBar(SnackBar(content: Text(err)));
-                              }
-                            },
-                            onCancel: () async {
-                              final err = await state.cancelTransfer(
-                                t.transferId,
-                              );
-                              if (err != null && context.mounted) {
-                                ScaffoldMessenger.of(context)
-                                    .showSnackBar(SnackBar(content: Text(err)));
-                              }
-                            },
-                            onPause: t.isInProgress
-                                ? () async {
-                                    final err = await state.pauseTransfer(t.transferId);
-                                    if (err != null && context.mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
-                                    }
-                                  }
-                                : null,
-                            onResume: t.isPaused
-                                ? () async {
-                                    final err = await state.resumeTransfer(t.transferId);
-                                    if (err != null && context.mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
-                                    }
-                                  }
-                                : null,
-                            onRetry: () async {
-                              final path =
-                                  state.sentPaths[t.transferId] ?? t.localPath;
-                              if (path == null) {
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('无法自动重试：原文件路径未知，请重新选择发送'),
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      24,
+                                      6,
+                                      24,
+                                      0,
                                     ),
-                                  );
-                                }
-                                return;
-                              }
-                              final err = await state.sendFile(
-                                t.peerDeviceId,
-                                path,
-                              );
-                              if (err != null && context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('重试失败：$err')),
-                                );
-                              }
-                            },
+                                    child: Text(
+                                      '${t.isOutgoing ? '发送给' : '来自'} $peerName',
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        color: cc.moonDim,
+                                      ),
+                                    ),
+                                  ),
+                                  TransferTile(
+                                    transfer: t,
+                                    imagePreviewEnabled:
+                                        state.imagePreviewEnabled,
+                                    onPreview: canPreview
+                                        ? () => _preview(context, t)
+                                        : null,
+                                    onOpen: t.localPath == null
+                                        ? null
+                                        : () => _openFile(context, t),
+                                    onOpenFolder: t.localPath == null
+                                        ? null
+                                        : () => _openFolder(context, t),
+                                    onAccept: () async {
+                                      final dir =
+                                          await _resolveReceiveDirectory(state);
+                                      if (dir == null || dir.isEmpty) return;
+                                      final err = await _acceptOne(
+                                        state,
+                                        t,
+                                        dir,
+                                      );
+                                      if (err != null && context.mounted) {
+                                        _showError(context, err);
+                                      }
+                                    },
+                                    onReject: () async {
+                                      final err = await state.rejectTransfer(
+                                        t.transferId,
+                                        '用户拒绝',
+                                      );
+                                      if (err != null && context.mounted) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                              SnackBar(content: Text(err)),
+                                            );
+                                      }
+                                    },
+                                    onCancel: () async {
+                                      final err = await state.cancelTransfer(
+                                        t.transferId,
+                                      );
+                                      if (err != null && context.mounted) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                              SnackBar(content: Text(err)),
+                                            );
+                                      }
+                                    },
+                                    onPause: t.isInProgress
+                                        ? () async {
+                                            final err = await state
+                                                .pauseTransfer(t.transferId);
+                                            if (err != null &&
+                                                context.mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(content: Text(err)),
+                                              );
+                                            }
+                                          }
+                                        : null,
+                                    onResume: t.isPaused
+                                        ? () async {
+                                            final err = await state
+                                                .resumeTransfer(t.transferId);
+                                            if (err != null &&
+                                                context.mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(content: Text(err)),
+                                              );
+                                            }
+                                          }
+                                        : null,
+                                    onRetry: () async {
+                                      final path =
+                                          state.sentPaths[t.transferId] ??
+                                          t.localPath;
+                                      if (path == null) {
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                                const SnackBar(
+                                                  content: Text(
+                                                    '无法自动重试：原文件路径未知，请重新选择发送',
+                                                  ),
+                                                ),
+                                              );
+                                        }
+                                        return;
+                                      }
+                                      final err = await state.sendFile(
+                                        t.peerDeviceId,
+                                        path,
+                                      );
+                                      if (err != null && context.mounted) {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(content: Text('重试失败：$err')),
+                                        );
+                                      }
+                                    },
                                   ),
                                 ],
                               ),
@@ -393,7 +506,7 @@ class _TransfersPageState extends State<TransfersPage> {
                             if (_selectionMode && _canDelete(t))
                               Positioned(
                                 right: 28,
-                                top: 14,
+                                top: 22,
                                 child: Checkbox(
                                   value: selected,
                                   onChanged: (_) => _toggleSelection(t),
@@ -411,8 +524,12 @@ class _TransfersPageState extends State<TransfersPage> {
   }
 
   String _size(int bytes) {
-    if (bytes >= 1073741824) return '${(bytes / 1073741824).toStringAsFixed(1)} GB';
-    if (bytes >= 1048576) return '${(bytes / 1048576).toStringAsFixed(1)} MB';
+    if (bytes >= 1073741824) {
+      return '${(bytes / 1073741824).toStringAsFixed(1)} GB';
+    }
+    if (bytes >= 1048576) {
+      return '${(bytes / 1048576).toStringAsFixed(1)} MB';
+    }
     if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
     return '$bytes B';
   }

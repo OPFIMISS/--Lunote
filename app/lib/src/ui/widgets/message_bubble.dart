@@ -13,10 +13,12 @@ class MessageBubble extends StatefulWidget {
     super.key,
     required this.message,
     required this.peerName,
+    this.imagePreviewEnabled = true,
   });
 
   final MessageItem message;
   final String peerName;
+  final bool imagePreviewEnabled;
 
   @override
   State<MessageBubble> createState() => _MessageBubbleState();
@@ -77,7 +79,11 @@ class _MessageBubbleState extends State<MessageBubble>
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 18),
           constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.62,
+            // QQ-style bubbles stay readable on desktop while leaving room
+            // for the opposing side on narrow screens.
+            maxWidth: MediaQuery.of(context).size.width >= 720
+                ? 560
+                : MediaQuery.of(context).size.width * 0.86,
           ),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
@@ -115,7 +121,7 @@ class _MessageBubbleState extends State<MessageBubble>
               if (_isLink)
                 _LinkText(text: _displayText)
               else
-                Text(
+                SelectableText(
                   _displayText,
                   style: TextStyle(
                     fontSize: 14.5,

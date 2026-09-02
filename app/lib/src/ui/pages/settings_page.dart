@@ -424,6 +424,21 @@ class _SettingsPageState extends State<SettingsPage> {
             children: [
               _card(
                 children: [
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    value: state.imagePreviewEnabled,
+                    onChanged: (enabled) async {
+                      final error = await state.setImagePreview(enabled);
+                      if (error != null) _toast('保存失败：$error');
+                    },
+                    title: Text('图片/GIF 预览', style: TextStyle(fontSize: 13, color: cc.moonDim)),
+                    subtitle: Text('关闭后图片按普通文件显示，适用于传输和对话', style: TextStyle(fontSize: 11.5, color: cc.moonDim)),
+                    secondary: Icon(Icons.image_search_rounded, size: 18, color: cc.gold),
+                  ),
+                ],
+              ),
+              _card(
+                children: [
                   Row(
                     children: [
                       Icon(Icons.lock_rounded, size: 15, color: cc.gold),

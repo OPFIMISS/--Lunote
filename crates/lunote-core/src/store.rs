@@ -432,10 +432,7 @@ impl Store {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         for transfer_id in transfer_ids {
-            tx.execute(
-                "DELETE FROM transfers WHERE transfer_id=?1",
-                params![transfer_id],
-            )?;
+            tx.execute("DELETE FROM transfers WHERE id=?1", params![transfer_id])?;
         }
         tx.commit()?;
         Ok(())

@@ -31,6 +31,7 @@ class AppState extends ChangeNotifier {
   /// 主题：dark / light / system（settings.json 持久化）
   String themeMode = 'dark';
   String conflictPolicy = 'rename';
+  bool imagePreviewEnabled = true;
 
   /// deviceId -> 设备（发现层实时更新）
   final Map<String, PeerInfo> peers = {};
@@ -98,6 +99,7 @@ class AppState extends ChangeNotifier {
     });
     themeMode = stMap?['theme'] as String? ?? 'dark';
     conflictPolicy = stMap?['conflict'] as String? ?? 'rename';
+    imagePreviewEnabled = stMap?['image_preview'] as bool? ?? true;
     await refreshTrusted();
     await refreshConversations();
     _sub = core.events.listen(_onEvent);
@@ -701,6 +703,16 @@ class AppState extends ChangeNotifier {
       return null;
     }
     return r['error'] as String? ?? '设置失败';
+  }
+
+  Future<String?> setImagePreview(bool enabled) async {
+    final r = await core.call('set_image_preview', {'enabled': enabled});
+    if (r['ok'] == true) {
+      imagePreviewEnabled = enabled;
+      notifyListeners();
+      return null;
+    }
+    return r['error'] as String? ?? '设置图片预览失败';
   }
 
   Future<Map<String, dynamic>> diagnostics() async {
