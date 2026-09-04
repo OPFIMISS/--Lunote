@@ -60,6 +60,7 @@ pub struct Runtime {
     pub downloads_dir: PathBuf,
     pub tcp_port: u16,
     pub auto_trust: Arc<AtomicBool>,
+    pub auto_receive: Arc<AtomicBool>,
     /// 用户自定义接收目录（settings.json 持久化；None=用默认 downloads_dir）
     pub downloads_dir_setting: Mutex<Option<PathBuf>>,
     /// 主题（"dark"/"light"/"system"；settings.json 持久化，默认 "dark"）
@@ -94,6 +95,7 @@ impl Runtime {
 
         // 设置只读一次，避免启动路径出现彼此覆盖的重复初始化。
         let mut auto_trust_enabled = true;
+        let mut auto_receive_enabled = false;
         let mut downloads_dir_setting: Option<PathBuf> = None;
         let mut theme_setting = "dark".to_string();
         let mut image_preview_enabled = true;
@@ -105,6 +107,9 @@ impl Runtime {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
                 if let Some(b) = v.get("auto_trust").and_then(|x| x.as_bool()) {
                     auto_trust_enabled = b;
+                }
+                if let Some(b) = v.get("auto_receive").and_then(|x| x.as_bool()) {
+                    auto_receive_enabled = b;
                 }
                 if let Some(s) = v.get("downloads_dir").and_then(|x| x.as_str()) {
                     if !s.is_empty() {
@@ -140,6 +145,7 @@ impl Runtime {
             }
         }
         let auto_trust = Arc::new(AtomicBool::new(auto_trust_enabled));
+        let auto_receive = Arc::new(AtomicBool::new(auto_receive_enabled));
         let downloads_dir_setting = Mutex::new(downloads_dir_setting);
         let theme_setting = Mutex::new(theme_setting);
 
@@ -208,6 +214,7 @@ impl Runtime {
             downloads_dir,
             tcp_port: cfg.tcp_port,
             auto_trust,
+            auto_receive,
             downloads_dir_setting,
             theme_setting,
             image_preview_setting: Mutex::new(image_preview_enabled),
@@ -474,6 +481,7 @@ impl Runtime {
     pub fn settings(&self) -> serde_json::Value {
         serde_json::json!({
             "auto_trust": self.auto_trust_enabled(),
+            "auto_receive": self.auto_receive_enabled(),
             "downloads_dir": self.downloads_dir_setting.lock().unwrap().as_ref().map(|p| p.to_string_lossy().to_string()),
             "theme": self.theme_setting.lock().unwrap().clone(),
             "image_preview": self.image_preview_enabled(),
@@ -490,6 +498,7 @@ impl Runtime {
         let path = self.data_dir.join("settings.json");
         let mut cur = serde_json::json!({
             "auto_trust": self.auto_trust_enabled(),
+            "auto_receive": self.auto_receive_enabled(),
             "downloads_dir": self.downloads_dir_setting.lock().unwrap().as_ref().map(|p| p.to_string_lossy().to_string()),
             "theme": self.theme_setting.lock().unwrap().clone(),
             "conflict": match *self.conflict_setting.lock().unwrap() { ConflictPolicy::Rename => "rename", ConflictPolicy::Overwrite => "overwrite", ConflictPolicy::Skip => "skip" },
@@ -520,6 +529,19 @@ impl Runtime {
         let previous = self.auto_trust.swap(enabled, Ordering::Relaxed);
         if let Err(error) = self.write_settings(serde_json::json!({ "auto_trust": enabled })) {
             self.auto_trust.store(previous, Ordering::Relaxed);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn auto_receive_enabled(&self) -> bool {
+        self.auto_receive.load(Ordering::Relaxed)
+    }
+
+    pub fn set_auto_receive(&self, enabled: bool) -> Result<()> {
+        let previous = self.auto_receive.swap(enabled, Ordering::Relaxed);
+        if let Err(error) = self.write_settings(serde_json::json!({ "auto_receive": enabled })) {
+            self.auto_receive.store(previous, Ordering::Relaxed);
             return Err(error);
         }
         Ok(())

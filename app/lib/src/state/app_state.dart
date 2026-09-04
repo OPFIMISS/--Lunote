@@ -21,6 +21,7 @@ class AppState extends ChangeNotifier {
 
   /// 同名同 IP 新设备自动信任（核心持久化设置，默认开）
   bool autoTrust = true;
+  bool autoReceive = false;
 
   /// 自定义接收文件保存目录（settings.json 持久化；null = 使用默认 data/downloads）
   String? defaultDownloadDir;
@@ -88,6 +89,8 @@ class AppState extends ChangeNotifier {
     deviceName = id['name'] as String? ?? name;
     final st = await core.call('auto_trust');
     autoTrust = st['auto_trust'] == true;
+    final autoReceiveState = await core.call('auto_receive');
+    autoReceive = autoReceiveState['auto_receive'] == true;
     final st2 = await core.call('settings');
     final stMap = st2['settings'] as Map<String, dynamic>?;
     defaultDownloadDir = stMap?['downloads_dir'] as String?;
@@ -363,6 +366,9 @@ class AppState extends ChangeNotifier {
         final t = TransferItem.fromJson(e);
         _hiddenConversationIds.remove(t.peerDeviceId);
         _upsertTransfer(t);
+        if (t.isOffered && !t.isOutgoing && autoReceive) {
+          unawaited(_autoAcceptTransfer(t));
+        }
         if (t.isDone &&
             !t.isOutgoing &&
             receiveTreeUri != null &&
@@ -626,7 +632,12 @@ class AppState extends ChangeNotifier {
     }
     final configured = defaultDownloadDir;
     if (configured != null && configured.isNotEmpty) return configured;
-    if (!pickOnDesktop) return null;
+    if (!pickOnDesktop) {
+      final r = await core.call('data_dir');
+      final dataDir = r['data_dir'] as String?;
+      if (dataDir == null || dataDir.isEmpty) return null;
+      return '$dataDir${Platform.pathSeparator}downloads';
+    }
     return getDirectoryPath();
   }
 
@@ -686,6 +697,22 @@ class AppState extends ChangeNotifier {
       return null;
     }
     return r['error'] as String? ?? '设置失败';
+  }
+
+  Future<String?> setAutoReceive(bool enabled) async {
+    final r = await core.call('set_auto_receive', {'enabled': enabled});
+    if (r['ok'] == true) {
+      autoReceive = enabled;
+      notifyListeners();
+      return null;
+    }
+    return r['error'] as String? ?? '设置失败';
+  }
+
+  Future<void> _autoAcceptTransfer(TransferItem t) async {
+    final dir = await coreReceiveDirForAccept(pickOnDesktop: false);
+    if (dir == null) return;
+    await acceptTransfer(t.transferId, dir);
   }
 
   /// 设置自定义接收目录（核心持久化）；传 null 恢复默认

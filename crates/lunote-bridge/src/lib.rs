@@ -280,9 +280,18 @@ fn dispatch(runtime: &Runtime, rt: &tokio::runtime::Runtime, cmd_json: &str) -> 
             runtime.is_trusted(&s("device_id"))
         )),
         "auto_trust" => ok(&format!(",\"auto_trust\":{}", runtime.auto_trust_enabled())),
+        "auto_receive" => ok(&format!(
+            ",\"auto_receive\":{}",
+            runtime.auto_receive_enabled()
+        )),
         "set_auto_trust" => {
             let enabled = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(true);
             runtime.set_auto_trust(enabled)?;
+            ok("")
+        }
+        "set_auto_receive" => {
+            let enabled = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false);
+            runtime.set_auto_receive(enabled)?;
             ok("")
         }
         "settings" => ok(&format!(

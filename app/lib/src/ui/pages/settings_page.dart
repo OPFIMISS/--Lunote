@@ -494,6 +494,33 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   Row(
                     children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('自动接收', style: TextStyle(fontSize: 13, color: cc.moonDim)),
+                            const SizedBox(height: 4),
+                            Text('收到文件后自动接受并保存到默认接收目录，无需手动点击接收。', style: TextStyle(fontSize: 11.5, height: 1.5, color: cc.moonDim)),
+                          ],
+                        ),
+                      ),
+                      Switch(
+                        value: state.autoReceive,
+                        onChanged: (v) async {
+                          final error = await state.setAutoReceive(v);
+                          if (error != null) _toast('自动接收保存失败：$error');
+                        },
+                        activeTrackColor: cc.goldDeep,
+                        activeThumbColor: cc.night,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              _card(
+                children: [
+                  Row(
+                    children: [
                       Icon(Icons.lock_rounded, size: 15, color: cc.gold),
                       const SizedBox(width: 6),
                       Text(

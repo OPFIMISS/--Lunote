@@ -111,13 +111,17 @@ class MainActivity : FlutterActivity() {
                 tree,
                 DocumentsContract.getTreeDocumentId(tree),
             )
-            contentResolver.query(
+            val documentId = DocumentsContract.getTreeDocumentId(tree)
+            val display = contentResolver.query(
                 doc,
                 arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
                 null,
                 null,
                 null,
             )?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            val id = java.net.URLDecoder.decode(documentId, "UTF-8")
+            val relative = id.substringAfter(':', id)
+            if (display.isNullOrBlank()) null else "内部存储 / $relative"
         } catch (_: Exception) {
             null
         }
