@@ -473,6 +473,20 @@ class MainActivity : FlutterActivity() {
                 // 部分 ROM 对 tree URI 的 VIEW 会误判为目录选择器；直接使用
                 // document URI 可稳定进入目标目录。
                 val dirDoc = DocumentsContract.buildDocumentUri(authority, documentId)
+                // 各厂商文件管理器对目录 VIEW 的支持不一致：部分系统会接受 Intent，
+                // 却忽略 URI 并固定打开 Download。SAF 目录入口对小米、vivo、iQOO、
+                // OPPO、realme、三星和魅族更稳定。这里只浏览且不注册结果回调，
+                // 所以用户即使退出也不会修改当前接收目录。
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val browser = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                        addFlags(
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+                        )
+                        putExtra(DocumentsContract.EXTRA_INITIAL_URI, tree)
+                    }
+                    if (tryStartDirectoryIntent(browser)) return true
+                }
                 val view = Intent(Intent.ACTION_VIEW).apply {
                     setDataAndType(dirDoc, DocumentsContract.Document.MIME_TYPE_DIR)
                     addFlags(
@@ -564,6 +578,7 @@ class MainActivity : FlutterActivity() {
             false
         }
     }
+
 
     private fun externalDocUriForPath(path: String): Uri? {
         val normalized = path.replace('\\', '/')
