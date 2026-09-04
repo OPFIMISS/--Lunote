@@ -62,6 +62,10 @@ class _ImageThumbnailState extends State<ImageThumbnail> {
   @override
   Widget build(BuildContext context) {
     final cc = LunoteColors.of(context);
+    final image = _image;
+    final aspect = image == null || image.height == 0
+        ? 16 / 9
+        : image.width / image.height;
     return Semantics(
       button: widget.onTap != null,
       label: '预览图片',
@@ -70,13 +74,20 @@ class _ImageThumbnailState extends State<ImageThumbnail> {
         borderRadius: BorderRadius.circular(10),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(10),
-          child: AspectRatio(
-            aspectRatio: 16 / 9,
-            child: ColoredBox(
-              color: cc.nightSoft,
-              child: _image != null
-                  ? RawImage(image: _image, fit: BoxFit.cover)
-                  : Center(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth.isFinite
+                  ? constraints.maxWidth
+                  : 360.0;
+              final height = (width / aspect).clamp(120.0, 420.0);
+              return SizedBox(
+                width: width,
+                height: height,
+                child: ColoredBox(
+                  color: cc.nightSoft,
+                  child: image != null
+                      ? RawImage(image: image, fit: BoxFit.contain)
+                      : Center(
                       child: _error == null
                           ? SizedBox(
                               width: 20,
@@ -87,8 +98,10 @@ class _ImageThumbnailState extends State<ImageThumbnail> {
                               ),
                             )
                           : Icon(Icons.broken_image_rounded, color: cc.moonDim),
-                    ),
-            ),
+                      ),
+                ),
+              );
+            },
           ),
         ),
       ),

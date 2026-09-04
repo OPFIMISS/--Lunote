@@ -37,8 +37,21 @@ class _SettingsPageState extends State<SettingsPage> {
     super.dispose();
   }
 
+  /// 把 SAF tree URI（content://…/tree/primary%3ADownload）转成人眼可读的名字。
+  String _treeLabel(String treeUri) {
+    try {
+      final segment = Uri.parse(treeUri).pathSegments
+          .lastWhere((s) => s != 'tree', orElse: () => treeUri);
+      final decoded = Uri.decodeComponent(segment);
+      return decoded.startsWith('primary:') ? decoded.substring(8) : decoded;
+    } catch (_) {
+      return treeUri;
+    }
+  }
+
   Future<void> _openReceiveDirectory() async {
-    final dir = await context.read<AppState>().resolvedDownloadDir();
+    final state = context.read<AppState>();
+    final dir = await state.resolvedDownloadDir();
     if (dir == null) {
       _toast('无法获取接收目录');
       return;
@@ -47,8 +60,9 @@ class _SettingsPageState extends State<SettingsPage> {
       if (Platform.isAndroid) {
         final opened = await _platform.invokeMethod<bool>('openDirectory', {
           'path': dir,
+          'treeUri': ?state.receiveTreeUri,
         });
-        if (opened != true) _toast('系统中没有可用的文件管理器');
+        if (opened != true) _toast('Android 无法直接浏览私有暂存目录，请在系统文件管理器中查看已导出的接收目录');
       } else if (Platform.isWindows) {
         await Process.start('explorer.exe', [dir]);
       } else if (Platform.isLinux) {
@@ -87,7 +101,12 @@ class _SettingsPageState extends State<SettingsPage> {
                 style: TextStyle(color: cc.moon, height: 1.55),
               ),
             ),
-            actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭'))],
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('关闭'),
+              ),
+            ],
           );
         },
       );
@@ -431,9 +450,19 @@ class _SettingsPageState extends State<SettingsPage> {
                       final error = await state.setImagePreview(enabled);
                       if (error != null) _toast('保存失败：$error');
                     },
-                    title: Text('图片/GIF 预览', style: TextStyle(fontSize: 13, color: cc.moonDim)),
-                    subtitle: Text('关闭后图片按普通文件显示，适用于传输和对话', style: TextStyle(fontSize: 11.5, color: cc.moonDim)),
-                    secondary: Icon(Icons.image_search_rounded, size: 18, color: cc.gold),
+                    title: Text(
+                      '图片/GIF 预览',
+                      style: TextStyle(fontSize: 13, color: cc.moonDim),
+                    ),
+                    subtitle: Text(
+                      '关闭后图片按普通文件显示，适用于传输和对话',
+                      style: TextStyle(fontSize: 11.5, color: cc.moonDim),
+                    ),
+                    secondary: Icon(
+                      Icons.image_search_rounded,
+                      size: 18,
+                      color: cc.gold,
+                    ),
                   ),
                 ],
               ),
@@ -443,55 +472,85 @@ class _SettingsPageState extends State<SettingsPage> {
                     children: [
                       Icon(Icons.lock_rounded, size: 15, color: cc.gold),
                       const SizedBox(width: 6),
-                      Text('应用锁', style: TextStyle(fontSize: 13, color: cc.moonDim)),
+                      Text(
+                        '应用锁',
+                        style: TextStyle(fontSize: 13, color: cc.moonDim),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 6),
-                  Text('后台切换回来时要求 PIN，PIN 仅保存摘要', style: TextStyle(fontSize: 11.5, color: cc.moonDim)),
+                  Text(
+                    '后台切换回来时要求 PIN，PIN 仅保存摘要',
+                    style: TextStyle(fontSize: 11.5, color: cc.moonDim),
+                  ),
                   const SizedBox(height: 10),
-                  Wrap(spacing: 10, children: [
-                    SpringButton(
-                      weight: SpringWeight.normal,
-                      onTap: () async {
-                        final state = context.read<AppState>();
-                        final pin = await _askPassword('设置应用锁', '输入 4-12 位 PIN');
-                        if (!mounted) return;
-                        if (pin == null || pin.length < 4) { if (pin != null) _toast('PIN 至少 4 位'); return; }
-                        final err = await state.setPin(pin);
-                        if (!mounted) return;
-                        _toast(err ?? '应用锁已开启');
-                      },
-                      child: _pill(Icons.lock_open_rounded, '设置 PIN'),
-                    ),
-                    if (context.watch<AppState>().pinEnabled)
+                  Wrap(
+                    spacing: 10,
+                    children: [
                       SpringButton(
                         weight: SpringWeight.normal,
                         onTap: () async {
-                          final err = await context.read<AppState>().setPin(null);
+                          final state = context.read<AppState>();
+                          final pin = await _askPassword(
+                            '设置应用锁',
+                            '输入 4-12 位 PIN',
+                          );
                           if (!mounted) return;
-                          _toast(err ?? '应用锁已关闭');
+                          if (pin == null || pin.length < 4) {
+                            if (pin != null) _toast('PIN 至少 4 位');
+                            return;
+                          }
+                          final err = await state.setPin(pin);
+                          if (!mounted) return;
+                          _toast(err ?? '应用锁已开启');
                         },
-                        child: _pill(Icons.lock_reset_rounded, '关闭应用锁'),
+                        child: _pill(Icons.lock_open_rounded, '设置 PIN'),
                       ),
-                  ]),
+                      if (context.watch<AppState>().pinEnabled)
+                        SpringButton(
+                          weight: SpringWeight.normal,
+                          onTap: () async {
+                            final err = await context.read<AppState>().setPin(
+                              null,
+                            );
+                            if (!mounted) return;
+                            _toast(err ?? '应用锁已关闭');
+                          },
+                          child: _pill(Icons.lock_reset_rounded, '关闭应用锁'),
+                        ),
+                    ],
+                  ),
                 ],
               ),
               _card(
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.network_check_rounded, size: 15, color: cc.gold),
+                      Icon(
+                        Icons.network_check_rounded,
+                        size: 15,
+                        color: cc.gold,
+                      ),
                       const SizedBox(width: 6),
-                      Text('设备诊断', style: TextStyle(fontSize: 13, color: cc.moonDim)),
+                      Text(
+                        '设备诊断',
+                        style: TextStyle(fontSize: 13, color: cc.moonDim),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Text('查看监听端口、在线设备和发现统计，排查网络问题', style: TextStyle(fontSize: 11.5, color: cc.moonDim)),
+                  Text(
+                    '查看监听端口、在线设备和发现统计，排查网络问题',
+                    style: TextStyle(fontSize: 11.5, color: cc.moonDim),
+                  ),
                   const SizedBox(height: 10),
                   SpringButton(
                     weight: SpringWeight.normal,
                     onTap: _loadingDiagnostics ? null : _showDiagnostics,
-                    child: _pill(Icons.monitor_heart_rounded, _loadingDiagnostics ? '读取中…' : '查看诊断信息'),
+                    child: _pill(
+                      Icons.monitor_heart_rounded,
+                      _loadingDiagnostics ? '读取中…' : '查看诊断信息',
+                    ),
                   ),
                 ],
               ),
@@ -614,7 +673,12 @@ class _SettingsPageState extends State<SettingsPage> {
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          state.defaultDownloadDir ?? '默认（数据目录\\downloads）',
+                          Platform.isAndroid
+                              ? (state.receiveTreeUri != null
+                                    ? 'Android 公共目录：${_treeLabel(state.receiveTreeUri!)}（文件先存应用暂存，完成后自动导出）'
+                                    : '默认（应用私有 downloads，可在系统文件管理器导出目录查看）')
+                              : (state.defaultDownloadDir ??
+                                    '默认（数据目录\\downloads）'),
                           style: TextStyle(fontSize: 12, color: cc.moonDim),
                         ),
                       ),
@@ -623,16 +687,20 @@ class _SettingsPageState extends State<SettingsPage> {
                   const SizedBox(height: 12),
                   Row(
                     children: [
-                      SpringButton(
-                        weight: SpringWeight.normal,
-                        onTap: () async {
-                          final dir = await getDirectoryPath();
-                          if (dir == null) return;
-                          final err = await state.setDownloadDir(dir);
-                          _toast(err == null ? '已设置接收目录，长期生效' : '设置失败：$err');
-                        },
-                        child: _pill(Icons.create_new_folder_rounded, '选择文件夹'),
-                      ),
+                      if (!Platform.isAndroid)
+                        SpringButton(
+                          weight: SpringWeight.normal,
+                          onTap: () async {
+                            final dir = await getDirectoryPath();
+                            if (dir == null) return;
+                            final err = await state.setDownloadDir(dir);
+                            _toast(err == null ? '已设置接收目录，长期生效' : '设置失败：$err');
+                          },
+                          child: _pill(
+                            Icons.create_new_folder_rounded,
+                            '选择文件夹',
+                          ),
+                        ),
                       SpringButton(
                         weight: SpringWeight.normal,
                         onTap: _openReceiveDirectory,
@@ -646,9 +714,10 @@ class _SettingsPageState extends State<SettingsPage> {
                             if (!mounted) return;
                             _toast(err ?? '已设置 Android 接收目录');
                           },
-                          child: _pill(Icons.sd_storage_rounded, '选择 Android 目录'),
+                          child: _pill(Icons.sd_storage_rounded, '选择接收目录'),
                         ),
-                      if (state.defaultDownloadDir != null)
+                      if (state.defaultDownloadDir != null &&
+                          !Platform.isAndroid)
                         SpringButton(
                           weight: SpringWeight.normal,
                           onTap: () async {
@@ -720,17 +789,29 @@ class _SettingsPageState extends State<SettingsPage> {
                     children: [
                       Icon(Icons.rule_rounded, size: 15, color: cc.gold),
                       const SizedBox(width: 6),
-                      Text('文件冲突处理', style: TextStyle(fontSize: 13, color: cc.moonDim)),
+                      Text(
+                        '文件冲突处理',
+                        style: TextStyle(fontSize: 13, color: cc.moonDim),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Text('接收同名文件时的默认行为，双端同步保存', style: TextStyle(fontSize: 11.5, color: cc.moonDim)),
+                  Text(
+                    '接收同名文件时的默认行为，双端同步保存',
+                    style: TextStyle(fontSize: 11.5, color: cc.moonDim),
+                  ),
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
                     initialValue: state.conflictPolicy,
                     items: const [
-                      DropdownMenuItem(value: 'rename', child: Text('自动重命名（推荐）')),
-                      DropdownMenuItem(value: 'overwrite', child: Text('覆盖已有文件')),
+                      DropdownMenuItem(
+                        value: 'rename',
+                        child: Text('自动重命名（推荐）'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'overwrite',
+                        child: Text('覆盖已有文件'),
+                      ),
                       DropdownMenuItem(value: 'skip', child: Text('跳过已有文件')),
                     ],
                     onChanged: (v) async {

@@ -1,6 +1,7 @@
 package com.lunote.lunote_app
 
 import android.content.Context
+import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.net.wifi.WifiManager
@@ -31,8 +32,11 @@ class MainActivity : FlutterActivity() {
     private var pendingTransferAction: String? = null
     private var pendingFolderResult: MethodChannel.Result? = null
     private var pendingReceiveFolderResult: MethodChannel.Result? = null
+    private var pendingGalleryResult: MethodChannel.Result? = null
+    private var pendingApkPath: String? = null
     private val folderRequestCode = 4207
     private val receiveFolderRequestCode = 4208
+    private val galleryRequestCode = 4209
     private val transferChannelId = "lunote_transfers"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -61,7 +65,8 @@ class MainActivity : FlutterActivity() {
                     }
                     result.success(true)
                 }
-                "openDirectory" -> result.success(openDirectory(path))
+                "openDirectory" ->
+                    result.success(openDirectory(path, call.argument<String>("treeUri")))
                 "openFile" -> result.success(openFile(path))
                 "getPendingShare" -> {
                     // Copying a shared 4 GB file can take minutes. Never perform it on
@@ -74,7 +79,12 @@ class MainActivity : FlutterActivity() {
                 "getPendingTransferAction" -> result.success(pendingTransferAction.also { pendingTransferAction = null })
                 "pickFolderForTransfer" -> pickFolderForTransfer(result)
                 "pickReceiveFolder" -> pickReceiveFolder(result)
-                "exportToTree" -> result.success(exportToTree(path, call.argument<String>("treeUri")))
+                "pickGallery" -> pickGallery(result)
+                "exportToTree" -> exportToTreeAsync(
+                    path,
+                    call.argument<String>("treeUri"),
+                    result,
+                )
                 else -> result.notImplemented()
             }
         }
@@ -185,6 +195,40 @@ class MainActivity : FlutterActivity() {
         startActivityForResult(intent, receiveFolderRequestCode)
     }
 
+    private fun pickGallery(result: MethodChannel.Result) {
+        if (pendingGalleryResult != null) {
+            result.error("BUSY", "已有相册选择正在进行", null)
+            return
+        }
+        pendingGalleryResult = result
+        val intent = Intent(
+            if (Build.VERSION.SDK_INT >= 33) {
+                // Android 13+ 系统照片选择器，避免回落到 DocumentsUI 文件管理器。
+                "android.provider.action.PICK_IMAGES"
+            } else {
+                Intent.ACTION_PICK
+            },
+        ).apply {
+            if (Build.VERSION.SDK_INT < 33) {
+                setDataAndType(
+                    android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    "image/*",
+                )
+            } else {
+                type = "image/*"
+                putExtra("android.provider.extra.PICK_IMAGES_MAX", 100)
+            }
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        try {
+            startActivityForResult(intent, galleryRequestCode)
+        } catch (e: Exception) {
+            pendingGalleryResult = null
+            result.error("NO_GALLERY", "系统没有可用的相册应用", e.message)
+        }
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == receiveFolderRequestCode) {
@@ -194,6 +238,30 @@ class MainActivity : FlutterActivity() {
             val uri = data.data!!
             try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } catch (_: Exception) { }
             result.success(uri.toString())
+            return
+        }
+        if (requestCode == galleryRequestCode) {
+            val result = pendingGalleryResult ?: return
+            pendingGalleryResult = null
+            if (resultCode != RESULT_OK || data == null) {
+                result.success(emptyList<String>())
+                return
+            }
+            val selected = mutableListOf<Uri>()
+            data.data?.let { selected.add(it) }
+            data.clipData?.let { clip ->
+                for (i in 0 until clip.itemCount) selected.add(clip.getItemAt(i).uri)
+            }
+            Thread {
+                val paths = selected.distinct().mapIndexedNotNull { index, uri ->
+                    copySharedUri(uri, index)
+                }
+                runOnUiThread { result.success(paths) }
+            }.apply {
+                name = "lunote-gallery-copy"
+                isDaemon = true
+                start()
+            }
             return
         }
         if (requestCode != folderRequestCode) return
@@ -226,6 +294,23 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             android.util.Log.w("Lunote", "导出到 SAF 目录失败: ${e.message}")
             false
+        }
+    }
+
+    private fun exportToTreeAsync(
+        path: String,
+        treeUriString: String?,
+        result: MethodChannel.Result,
+    ) {
+        // SAF 流复制可能持续数分钟，尤其是数 GB 文件。必须离开平台主线程，
+        // 否则 Flutter 界面与系统 ANR 检测都会被阻塞。
+        Thread {
+            val exported = exportToTree(path, treeUriString)
+            runOnUiThread { result.success(exported) }
+        }.apply {
+            name = "lunote-saf-export"
+            isDaemon = true
+            start()
         }
     }
 
@@ -274,10 +359,50 @@ class MainActivity : FlutterActivity() {
                 "$packageName.fileprovider",
                 file,
             )
+            val isApk = file.name.lowercase().endsWith(".apk")
+            if (isApk) {
+                // 安装器需要 REQUEST_INSTALL_PACKAGES 与“安装未知应用”授权；
+                // 未授权时直接拉起会被系统静默拒绝（表现为点了安装程序却没反应）。
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                    !packageManager.canRequestPackageInstalls()
+                ) {
+                    pendingApkPath = file.absolutePath
+                    return openUnknownSourcesSettings()
+                }
+                val install = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    clipData = ClipData.newRawUri("Lunote APK", uri)
+                    addFlags(
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            Intent.FLAG_ACTIVITY_NEW_TASK,
+                    )
+                }
+                val handlers = packageManager.queryIntentActivities(install, 0)
+                for (handler in handlers) {
+                    grantUriPermission(
+                        handler.activityInfo.packageName,
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                    )
+                }
+                return try {
+                    // Android 11+ 的包可见性可能令 resolveActivity/query 返回空，
+                    // 但系统安装器仍能处理隐式 Intent，因此直接尝试启动。
+                    startActivity(install)
+                    true
+                } catch (_: Exception) {
+                    install.action = Intent.ACTION_VIEW
+                    startActivity(install)
+                    true
+                }
+            }
             val mime = java.net.URLConnection.guessContentTypeFromName(file.name) ?: "*/*"
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, mime)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_ACTIVITY_NEW_TASK,
+                )
             }
             startActivity(Intent.createChooser(intent, "打开文件"))
             true
@@ -287,8 +412,74 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun openDirectory(path: String): Boolean {
-        return try {
+    private fun openUnknownSourcesSettings(): Boolean {
+        try {
+            val intent = Intent(
+                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:$packageName"),
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (intent.resolveActivity(packageManager) != null) {
+                startActivity(intent)
+                return true
+            }
+        } catch (_: Exception) {
+        }
+        try {
+            startActivity(
+                Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            return true
+        } catch (e: Exception) {
+            android.util.Log.w("Lunote", "无法打开安装权限设置: ${e.message}")
+            return false
+        }
+    }
+
+    private fun openDirectory(path: String, treeUriString: String?): Boolean {
+        // 1) 接收文件在 Android 上先写私有暂存、再经 SAF 导出到用户选择的目录；
+        //    查看“所在文件夹”时优先打开该 SAF 导出目录的真实内容视图。
+        if (!treeUriString.isNullOrBlank()) {
+            try {
+                val tree = Uri.parse(treeUriString)
+                val authority = tree.authority
+                    ?: "com.android.externalstorage.documents"
+                val documentId = DocumentsContract.getTreeDocumentId(tree)
+                // 部分 ROM 对 tree URI 的 VIEW 会误判为目录选择器；直接使用
+                // document URI 可稳定进入目标目录。
+                val dirDoc = DocumentsContract.buildDocumentUri(authority, documentId)
+                val view = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(dirDoc, DocumentsContract.Document.MIME_TYPE_DIR)
+                    addFlags(
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            Intent.FLAG_ACTIVITY_NEW_TASK,
+                    )
+                }
+                if (view.resolveActivity(packageManager) != null) {
+                    startActivity(view)
+                    return true
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("Lunote", "无法查看 SAF 接收目录: ${e.message}")
+            }
+        }
+        // 2) 公共外部存储的真实路径：映射为 externalstorage 文档 URI 后以浏览模式打开。
+        try {
+            externalDocUriForPath(path)?.let { doc ->
+                val view = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(doc, DocumentsContract.Document.MIME_TYPE_DIR)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                if (view.resolveActivity(packageManager) != null) {
+                    startActivity(view)
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("Lunote", "无法查看外部目录: ${e.message}")
+        }
+        // 3) 部分国产文件管理器支持 resource/folder 协议。
+        try {
             val directory = java.io.File(path)
             if (!directory.exists() && !directory.mkdirs()) return false
             val uri = FileProvider.getUriForFile(
@@ -300,35 +491,21 @@ class MainActivity : FlutterActivity() {
                 setDataAndType(uri, "resource/folder")
                 addFlags(
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                        Intent.FLAG_ACTIVITY_NEW_TASK,
                 )
             }
             if (viewIntent.resolveActivity(packageManager) != null) {
-                startActivity(Intent.createChooser(viewIntent, "打开文件夹"))
+                startActivity(viewIntent)
                 return true
             }
-
-            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-                addFlags(
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
-                )
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    initialDocumentUri(path)?.let {
-                        putExtra(DocumentsContract.EXTRA_INITIAL_URI, it)
-                    }
-                }
-            }
-            startActivity(intent)
-            true
         } catch (e: Exception) {
-            android.util.Log.w("Lunote", "无法打开接收目录: ${e.message}")
-            false
+            android.util.Log.w("Lunote", "无法打开文件夹: ${e.message}")
         }
+        // 不再回退到 ACTION_OPEN_DOCUMENT_TREE——那是“选择目录”界面而不是查看目录。
+        return false
     }
 
-    private fun initialDocumentUri(path: String): Uri? {
+    private fun externalDocUriForPath(path: String): Uri? {
         val normalized = path.replace('\\', '/')
         val marker = "/storage/emulated/0/"
         if (!normalized.startsWith(marker)) return null
@@ -409,6 +586,14 @@ class MainActivity : FlutterActivity() {
         // 部分 Android ROM 在 Activity 恢复后会释放 Wi-Fi 组播接收能力。
         acquireMulticastLock()
         stopService(Intent(this, TransferForegroundService::class.java))
+        val apk = pendingApkPath
+        if (apk != null &&
+            (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+                packageManager.canRequestPackageInstalls())
+        ) {
+            pendingApkPath = null
+            window.decorView.postDelayed({ openFile(apk) }, 250)
+        }
     }
 
     override fun onPause() {

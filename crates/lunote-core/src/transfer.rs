@@ -188,9 +188,8 @@ impl TransferManager {
     }
 
     pub async fn accept_transfer(&self, transfer_id: &str, dest_dir: &Path) -> Result<()> {
-        std::fs::create_dir_all(dest_dir)
-            .with_context(|| format!("创建接收目录失败: {}", dest_dir.display()))?;
-        let st = {
+        // 先取状态与对端，校验目录可写后才进入 Accepted，避免“半接受”状态。
+        let (peer, expected_size) = {
             let mut map = self.incoming.lock().unwrap();
             let st = map
                 .get_mut(transfer_id)
@@ -198,26 +197,52 @@ impl TransferManager {
             if st.state != TransferState::Offered {
                 bail!("传输状态不是待确认（当前 {:?}）", st.state);
             }
+            (st.peer.clone(), st.size)
+        };
+        // 目录可写性探测：Android 公共目录（如 Download）在分区存储下可能能枚举但不能创建文件，
+        // 若不在接受前探测，首个分块写入失败会造成“假性完整性校验失败”且双端卡死。
+        if let Err(e) = ensure_writable_dir(dest_dir) {
+            self.reject_transfer_with_reason(transfer_id, &peer, &e.to_string())
+                .await;
+            bail!("{}", e);
+        }
+        match free_space(dest_dir) {
+            Ok(avail) if avail < expected_size => {
+                let reason = format!(
+                    "接收目录剩余空间不足（需要 {} 字节，剩余 {} 字节）",
+                    expected_size, avail
+                );
+                self.reject_transfer_with_reason(transfer_id, &peer, &reason)
+                    .await;
+                bail!("{}", reason);
+            }
+            Err(e) => {
+                let reason = format!("无法检查接收目录可用空间: {}", e);
+                self.reject_transfer_with_reason(transfer_id, &peer, &reason)
+                    .await;
+                bail!("{}", reason);
+            }
+            _ => {}
+        }
+        let st = {
+            let mut map = self.incoming.lock().unwrap();
+            let Some(st) = map.get_mut(transfer_id) else {
+                bail!("传输不存在或已结束: {}", transfer_id);
+            };
+            if st.state != TransferState::Offered {
+                bail!("传输状态不是待确认（当前 {:?}）", st.state);
+            }
             st.dest_dir = Some(dest_dir.to_path_buf());
             st.state = TransferState::Accepted;
             st.clone_for_send()
         };
-        // 剩余空间检查
-        let avail = free_space(dest_dir)?;
-        if avail < st.size {
-            bail!(
-                "接收目录剩余空间不足（需要 {} 字节，剩余 {} 字节）",
-                st.size,
-                avail
-            );
-        }
         let partial = if st.received > 0 {
             st.partial_hash.clone()
         } else {
             None
         };
         self.send_control(
-            &st.peer,
+            &peer,
             Control::FileAccept {
                 transfer_id: transfer_id.to_string(),
                 offset: st.received,
@@ -227,6 +252,33 @@ impl TransferManager {
         .await?;
         self.emit_update(st.into_info(Some("已确认".into())));
         Ok(())
+    }
+
+    /// 接收方拒绝：把状态置为 Rejected 并通知对端（用于接受前的校验失败）。
+    async fn reject_transfer_with_reason(&self, transfer_id: &str, peer: &str, reason: &str) {
+        let st = {
+            let mut map = self.incoming.lock().unwrap();
+            match map.get_mut(transfer_id) {
+                Some(st) if st.state == TransferState::Offered => {
+                    st.state = TransferState::Rejected;
+                    st.error = Some(reason.to_string());
+                    Some(st.clone_for_send())
+                }
+                _ => None,
+            }
+        };
+        if let Some(st) = st {
+            let _ = self
+                .send_control(
+                    peer,
+                    Control::FileReject {
+                        transfer_id: transfer_id.to_string(),
+                        reason: reason.to_string(),
+                    },
+                )
+                .await;
+            self.emit_update(st.into_info(Some(reason.to_string())));
+        }
     }
 
     pub async fn reject_transfer(&self, transfer_id: &str, reason: &str) -> Result<()> {
@@ -692,50 +744,8 @@ impl TransferManager {
                     serde_json::to_string(&meta).unwrap_or_default(),
                 );
             }
-            let mut hasher = Sha256::new();
-            if st.received > 0 {
-                // 恢复续传时，最终完整性校验必须包含已落盘的前缀。
-                // partial_hash 只用于发送端确认 offset，不能替代可继续 update 的状态。
-                let mut existing = match tokio::fs::File::open(&temp_path).await {
-                    Ok(file) => file,
-                    Err(e) => {
-                        st.state = TransferState::Failed;
-                        st.error = Some(format!("读取续传分片失败: {}", e));
-                        let info = st.clone_for_send().into_info(st.error.clone());
-                        self.reinsert_incoming(&transfer_id, st);
-                        self.emit_update(info);
-                        return Err(anyhow!("读取续传分片失败: {}", e));
-                    }
-                };
-                let mut remaining = st.received;
-                let mut prefix = vec![0u8; CHUNK_SIZE];
-                while remaining > 0 {
-                    let want = remaining.min(prefix.len() as u64) as usize;
-                    match existing.read(&mut prefix[..want]).await {
-                        Ok(0) => {
-                            st.state = TransferState::Failed;
-                            st.error = Some("续传分片短于记录偏移".into());
-                            let info = st.clone_for_send().into_info(st.error.clone());
-                            self.reinsert_incoming(&transfer_id, st);
-                            self.emit_update(info);
-                            return Err(anyhow!("续传分片短于记录偏移"));
-                        }
-                        Ok(n) => {
-                            hasher.update(&prefix[..n]);
-                            remaining -= n as u64;
-                        }
-                        Err(e) => {
-                            st.state = TransferState::Failed;
-                            st.error = Some(format!("读取续传分片失败: {}", e));
-                            let info = st.clone_for_send().into_info(st.error.clone());
-                            self.reinsert_incoming(&transfer_id, st);
-                            self.emit_update(info);
-                            return Err(anyhow!("读取续传分片失败: {}", e));
-                        }
-                    }
-                }
-            }
-            st.hasher = Some(hasher);
+            // 先打开/定位临时文件，成功后才创建哈希器，避免留下“已建但未灌数据”的空哈希状态，
+            // 那会让后续 FileDone 报出误导性的“完整性校验失败（local=空哈希）”。
             let opened = tokio::fs::OpenOptions::new()
                 .create(true)
                 .write(true)
@@ -745,24 +755,56 @@ impl TransferManager {
             let mut f = match opened {
                 Ok(f) => f,
                 Err(e) => {
-                    st.state = TransferState::Failed;
-                    st.error = Some(format!("打开临时文件失败: {}", e));
-                    let info = st.clone_for_send().into_info(st.error.clone());
-                    self.reinsert_incoming(&transfer_id, st);
-                    self.emit_update(info);
-                    return Err(anyhow!("打开临时文件失败: {}", e));
+                    let reason = format!("写入接收目录失败（请检查应用存储权限）: {}", e);
+                    self.fail_incoming(&transfer_id, st, &reason).await;
+                    return Err(anyhow!("{}", reason));
                 }
             };
             if st.received > 0 {
                 if let Err(e) = f.seek(std::io::SeekFrom::Start(st.received)).await {
-                    st.state = TransferState::Failed;
-                    st.error = Some(format!("定位续传偏移失败: {}", e));
-                    let info = st.clone_for_send().into_info(st.error.clone());
-                    self.reinsert_incoming(&transfer_id, st);
-                    self.emit_update(info);
-                    return Err(anyhow!("定位续传偏移失败: {}", e));
+                    let reason = format!("定位续传偏移失败: {}", e);
+                    self.fail_incoming(&transfer_id, st, &reason).await;
+                    return Err(anyhow!("{}", reason));
                 }
             }
+            let mut hasher = Sha256::new();
+            if st.received > 0 {
+                // 恢复续传时，最终完整性校验必须包含已落盘的前缀。
+                // partial_hash 只用于发送端确认 offset，不能替代可继续 update 的状态。
+                let mut existing = match tokio::fs::File::open(&temp_path).await {
+                    Ok(file) => file,
+                    Err(e) => {
+                        let reason = format!("读取续传分片失败: {}", e);
+                        self.fail_incoming(&transfer_id, st, &reason).await;
+                        return Err(anyhow!("{}", reason));
+                    }
+                };
+                let mut remaining = st.received;
+                let mut prefix = vec![0u8; CHUNK_SIZE];
+                let mut replay_err: Option<String> = None;
+                while remaining > 0 {
+                    let want = remaining.min(prefix.len() as u64) as usize;
+                    match existing.read(&mut prefix[..want]).await {
+                        Ok(0) => {
+                            replay_err = Some("续传分片短于记录偏移".into());
+                            break;
+                        }
+                        Ok(n) => {
+                            hasher.update(&prefix[..n]);
+                            remaining -= n as u64;
+                        }
+                        Err(e) => {
+                            replay_err = Some(format!("读取续传分片失败: {}", e));
+                            break;
+                        }
+                    }
+                }
+                if let Some(reason) = replay_err {
+                    self.fail_incoming(&transfer_id, st, &reason).await;
+                    return Err(anyhow!("{}", reason));
+                }
+            }
+            st.hasher = Some(hasher);
             st.file = Some(f);
             st.state = TransferState::InProgress;
             self.emit_update(st.clone_for_send().into_info(None));
@@ -775,20 +817,14 @@ impl TransferManager {
                 st.received,
                 offset
             );
-            st.state = TransferState::Failed;
-            st.error = Some(format!("分块乱序（期望 {}，收到 {}）", st.received, offset));
-            let info = st.clone_for_send().into_info(st.error.clone());
-            self.reinsert_incoming(&transfer_id, st);
-            self.emit_update(info);
-            bail!("分块乱序");
+            let reason = format!("分块乱序（期望 {}，收到 {}）", st.received, offset);
+            self.fail_incoming(&transfer_id, st, &reason).await;
+            bail!("{}", reason);
         }
         if st.received + data.len() as u64 > st.size {
-            st.state = TransferState::Failed;
-            st.error = Some("收到的数据超过声明大小".into());
-            let info = st.clone_for_send().into_info(st.error.clone());
-            self.reinsert_incoming(&transfer_id, st);
-            self.emit_update(info);
-            bail!("数据超过声明大小");
+            let reason = "收到的数据超过声明大小";
+            self.fail_incoming(&transfer_id, st, reason).await;
+            bail!("{}", reason);
         }
         {
             let write_res = {
@@ -796,13 +832,10 @@ impl TransferManager {
                 file.write_all(data).await
             };
             if let Err(e) = write_res {
-                // 保持状态在表中：写失败也标记失败并继续维护，避免传输从 UI 消失
-                let info = st
-                    .clone_for_send()
-                    .into_info(Some(format!("写入临时文件失败: {}", e)));
-                self.reinsert_incoming(&transfer_id, st);
-                self.emit_update(info);
-                bail!("写入临时文件失败: {}", e);
+                // 保持状态在表中：写失败也标记失败并通知对端，避免传输从 UI 消失或对端盲发 FileDone
+                let reason = format!("写入临时文件失败: {}", e);
+                self.fail_incoming(&transfer_id, st, &reason).await;
+                bail!("{}", reason);
             }
         }
         if let Some(h) = st.hasher.as_mut() {
@@ -843,6 +876,33 @@ impl TransferManager {
             .lock()
             .unwrap()
             .insert(transfer_id.to_string(), st);
+    }
+
+    /// 接收端分块处理失败：标记失败、通知发送端立即停止（避免其盲发 FileDone 造成
+    /// 误导性的“完整性校验失败”），保留已落盘的 .part 以便后续续传。
+    async fn fail_incoming(&self, transfer_id: &str, mut st: IncomingState, reason: &str) {
+        let peer = st.peer.clone();
+        st.state = TransferState::Failed;
+        st.error = Some(reason.to_string());
+        st.file = None;
+        if st.received == 0 {
+            if let Some(p) = &st.temp_path {
+                let _ = std::fs::remove_file(p);
+                st.temp_path = None;
+            }
+        }
+        let info = st.clone_for_send().into_info(Some(reason.to_string()));
+        self.reinsert_incoming(transfer_id, st);
+        let _ = self
+            .send_control(
+                &peer,
+                Control::FileCancel {
+                    transfer_id: transfer_id.to_string(),
+                    reason: reason.to_string(),
+                },
+            )
+            .await;
+        self.emit_update(info);
     }
 
     fn remove_resume_meta(&self, token: &str) {
@@ -889,18 +949,28 @@ impl TransferManager {
                 .map(|e| e == &sha256)
                 .unwrap_or(true);
         if !ok_size || !ok_hash {
-            let reason = format!(
-                "完整性校验失败（size_ok={} hash_ok={} local={} remote={}）",
-                st.received == size,
-                local_hash == sha256,
-                local_hash,
-                sha256
-            );
+            let reason = if st.received == 0 {
+                "接收端未收到任何文件数据（接收目录不可写或传输被中断，请更换接收目录后重试）"
+                    .to_string()
+            } else {
+                format!(
+                    "完整性校验失败（size_ok={} hash_ok={} local={} remote={}）",
+                    st.received == size,
+                    local_hash == sha256,
+                    local_hash,
+                    sha256
+                )
+            };
             st.state = TransferState::Failed;
             st.error = Some(reason.clone());
             st.file = None;
-            if let Some(p) = &st.temp_path {
-                let _ = std::fs::remove_file(p);
+            // 已经收到的数据必须保留，下一次相同文件提议会通过 resume_token
+            // 找回 .part 并从断点继续。只有空分片才没有保留价值。
+            if st.received == 0 {
+                if let Some(p) = &st.temp_path {
+                    let _ = std::fs::remove_file(p);
+                    st.temp_path = None;
+                }
             }
             let info = st.clone_for_send().into_info(Some(reason.clone()));
             self.reinsert_incoming(&transfer_id, st);
@@ -1667,6 +1737,22 @@ fn unique_path(dir: &Path, rel_parts: &[String], name: &str) -> PathBuf {
     }
 }
 
+/// 校验/创建接收目录并做一次真实写入探测。
+/// Android 公共目录（如 Download）在分区存储下往往能被枚举、甚至能 mkdir，
+/// 但普通文件写入会被拒绝；只在首个分块写失败时才暴露会造成误导性错误，
+/// 因此在接受前主动探测，失败时以清晰原因拒绝。
+pub fn ensure_writable_dir(dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("创建接收目录失败: {}", dir.display()))?;
+    let probe = dir.join(format!(".lunote-write-probe-{}", crate::messages::new_id()));
+    match std::fs::write(&probe, b"ok") {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            Ok(())
+        }
+        Err(e) => Err(anyhow!("接收目录不可写: {}（{}）", dir.display(), e)),
+    }
+}
+
 impl IncomingState {
     fn clone_for_send(&self) -> IncomingState {
         IncomingState {
@@ -1756,5 +1842,21 @@ mod tests {
     fn speed_samples_are_smoothed() {
         assert_eq!(smooth_speed(0, 1_000), 1_000);
         assert_eq!(smooth_speed(1_000, 2_000), 1_300);
+    }
+
+    #[test]
+    fn ensure_writable_dir_probes_real_write() {
+        let tmp = std::env::temp_dir().join(format!("lunote-probe-{}", new_id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        assert!(ensure_writable_dir(&tmp).is_ok());
+        // 普通文件不能作为接收目录（误导性错误正源于此类不可写路径）
+        let file = tmp.join("not-a-dir");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(ensure_writable_dir(&file).is_err());
+        // 不存在的嵌套目录会被创建且可写
+        let nested = tmp.join("a").join("b");
+        assert!(ensure_writable_dir(&nested).is_ok());
+        assert!(nested.is_dir());
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -70,7 +69,13 @@ class _TransfersPageState extends State<TransfersPage> {
   }
 
   Future<void> _openFolder(BuildContext context, TransferItem transfer) async {
-    final error = await PlatformFiles.openContainingFolder(transfer.localPath);
+    final state = context.read<AppState>();
+    final error = await PlatformFiles.openContainingFolder(
+      transfer.localPath,
+      treeUri: (!transfer.isOutgoing && state.receiveTreeUri != null)
+          ? state.receiveTreeUri
+          : null,
+    );
     if (context.mounted) _showError(context, error);
   }
 
@@ -91,14 +96,9 @@ class _TransfersPageState extends State<TransfersPage> {
     _ => true,
   };
 
-  Future<String?> _resolveReceiveDirectory(AppState state) async {
-    final configured = state.defaultDownloadDir;
-    if (Platform.isAndroid && state.receiveTreeUri != null) {
-      return state.resolvedDownloadDir();
-    }
-    if (configured != null && configured.isNotEmpty) return configured;
-    if (Platform.isAndroid) return state.resolvedDownloadDir();
-    return getDirectoryPath();
+  Future<String?> _resolveReceiveDirectory(AppState state) {
+    // 与聊天页共用同一逻辑：Android 用私有暂存 + SAF 导出，桌面用配置目录或选择器。
+    return state.coreReceiveDirForAccept();
   }
 
   Future<String?> _acceptOne(AppState state, TransferItem t, String dir) {

@@ -18,6 +18,18 @@ class PlatformFiles {
     }
   }
 
+  /// Android 原生相册选择器。返回已复制到应用缓存的本地路径。
+  static Future<List<String>> pickGallery() async {
+    if (!Platform.isAndroid) return const <String>[];
+    try {
+      final value = await _channel.invokeMethod<List<dynamic>>('pickGallery');
+      return value?.whereType<String>().toList(growable: false) ??
+          const <String>[];
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
   static Future<String?> openFile(String? path) async {
     if (path == null || path.isEmpty) return '文件路径不可用';
     if (!File(path).existsSync()) return '文件已被移动或删除';
@@ -41,7 +53,10 @@ class PlatformFiles {
     }
   }
 
-  static Future<String?> openContainingFolder(String? path) async {
+  static Future<String?> openContainingFolder(
+    String? path, {
+    String? treeUri,
+  }) async {
     if (path == null || path.isEmpty) return '文件路径不可用';
     try {
       final file = File(path);
@@ -50,8 +65,12 @@ class PlatformFiles {
       if (Platform.isAndroid) {
         final opened = await _channel.invokeMethod<bool>('openDirectory', {
           'path': dir,
+          'treeUri': ?treeUri,
         });
-        return opened == true ? null : '系统中没有可用的文件管理器';
+        if (opened == true) return null;
+        return treeUri == null
+            ? 'Android 系统限制：无法直接浏览应用私有目录，文件位于 ${file.path}\n可在“设置→接收文件保存位置”选择公共目录后用系统文件管理器查看'
+            : '系统中没有可用的文件管理器';
       }
       if (Platform.isWindows) {
         await Process.start('explorer.exe', ['/select,', path]);

@@ -81,13 +81,9 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _pickGallery() async {
-    const images = XTypeGroup(
-      label: '图片',
-      extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic'],
-    );
-    final result = await openFiles(acceptedTypeGroups: [images]);
-    for (final f in result) {
-      await _sendPath(f.path);
+    final paths = await PlatformFiles.pickGallery();
+    for (final path in paths) {
+      await _sendPath(path);
     }
   }
 
@@ -194,16 +190,11 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _onAccept(TransferItem t) async {
     final state = context.read<AppState>();
-    // 设置页配置了默认保存目录则直接用；否则让用户选择
-    String dir;
-    final configured = state.defaultDownloadDir;
-    if (configured != null && configured.isNotEmpty) {
-      dir = configured;
-    } else {
-      final picked = await getDirectoryPath();
-      if (picked == null) return;
-      dir = picked;
-    }
+    // Android：核心只能写私有暂存目录（完成后按 SAF 接收目录导出）。
+    // 直接把用户选的公共目录交给核心会因分区存储写入失败，
+    // 表现为误导性的“完整性校验失败”。桌面端才允许逐次选目录。
+    final dir = await state.coreReceiveDirForAccept();
+    if (dir == null || !mounted) return;
     final err = await state.acceptTransfer(t.transferId, dir);
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
@@ -219,7 +210,13 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _openTransferFolder(TransferItem transfer) async {
-    final error = await PlatformFiles.openContainingFolder(transfer.localPath);
+    final state = context.read<AppState>();
+    final error = await PlatformFiles.openContainingFolder(
+      transfer.localPath,
+      treeUri: (!transfer.isOutgoing && state.receiveTreeUri != null)
+          ? state.receiveTreeUri
+          : null,
+    );
     if (error != null && mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(error)));

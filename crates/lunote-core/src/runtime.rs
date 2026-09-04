@@ -16,7 +16,7 @@ use crate::events::{CoreEvent, EventBus};
 use crate::identity::DeviceIdentity;
 use crate::session::SessionManager;
 use crate::store::{ExportReport, ImportReport, Store, StoredConversation};
-use crate::transfer::{ConflictPolicy, SendFile, TransferManager};
+use crate::transfer::{ensure_writable_dir, ConflictPolicy, SendFile, TransferManager};
 use crate::trust::{TrustRecord, TrustStore};
 
 #[derive(Clone, Debug)]
@@ -527,7 +527,16 @@ impl Runtime {
 
     /// 设置自定义接收目录；None 恢复为默认（data/downloads）
     pub fn set_downloads_dir(&self, dir: Option<&str>) -> Result<()> {
-        let d = dir.map(PathBuf::from);
+        let d = match dir {
+            Some(s) if !s.is_empty() => {
+                // 立即探测目录可创建且可写，避免把无法写入的公共路径（如 Android Download）
+                // 持久化成接收目录，等到真正传输时才以误导性错误失败。
+                let p = PathBuf::from(s);
+                ensure_writable_dir(&p).with_context(|| format!("接收目录不可用: {}", s))?;
+                Some(p)
+            }
+            _ => None,
+        };
         let previous = {
             let mut setting = self.downloads_dir_setting.lock().unwrap();
             std::mem::replace(&mut *setting, d.clone())

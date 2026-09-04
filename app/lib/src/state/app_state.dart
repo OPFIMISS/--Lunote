@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -56,6 +57,8 @@ class AppState extends ChangeNotifier {
 
   /// 本端发起的传输 → 源文件路径（供失败重试）
   final Map<String, String> sentPaths = {};
+  final Set<String> _exportingTransfers = <String>{};
+  final Set<String> _exportedTransfers = <String>{};
 
   /// 需要用户确认信任的设备（新设备连接时置位）
   String? pendingTrustDeviceId;
@@ -95,7 +98,9 @@ class AppState extends ChangeNotifier {
       final m = (value as Map?)?.cast<String, dynamic>();
       if (m?['favorite'] == true) favoriteDevices.add(id.toString());
       final alias = m?['alias'] as String?;
-      if (alias != null && alias.isNotEmpty) deviceAliases[id.toString()] = alias;
+      if (alias != null && alias.isNotEmpty) {
+        deviceAliases[id.toString()] = alias;
+      }
     });
     themeMode = stMap?['theme'] as String? ?? 'dark';
     conflictPolicy = stMap?['conflict'] as String? ?? 'rename';
@@ -358,7 +363,10 @@ class AppState extends ChangeNotifier {
         final t = TransferItem.fromJson(e);
         _hiddenConversationIds.remove(t.peerDeviceId);
         _upsertTransfer(t);
-        if (t.isDone && !t.isOutgoing && receiveTreeUri != null && t.localPath != null) {
+        if (t.isDone &&
+            !t.isOutgoing &&
+            receiveTreeUri != null &&
+            t.localPath != null) {
           unawaited(_exportReceivedToTree(t));
         }
         if (t.state == 'done' || t.state == 'failed' || t.isOffered) {
@@ -500,14 +508,30 @@ class AppState extends ChangeNotifier {
     return r['error'] as String? ?? '移除失败';
   }
 
-  Future<String?> setDeviceMeta(String deviceId, {String? alias, bool? favorite}) async {
-    final r = await core.call('set_device_meta', {'device_id': deviceId, 'alias': alias, 'favorite': favorite});
+  Future<String?> setDeviceMeta(
+    String deviceId, {
+    String? alias,
+    bool? favorite,
+  }) async {
+    final r = await core.call('set_device_meta', {
+      'device_id': deviceId,
+      'alias': alias,
+      'favorite': favorite,
+    });
     if (r['ok'] != true) return r['error'] as String? ?? '保存失败';
     if (alias != null) {
-      if (alias.isEmpty) { deviceAliases.remove(deviceId); } else { deviceAliases[deviceId] = alias; }
+      if (alias.isEmpty) {
+        deviceAliases.remove(deviceId);
+      } else {
+        deviceAliases[deviceId] = alias;
+      }
     }
     if (favorite != null) {
-      if (favorite) { favoriteDevices.add(deviceId); } else { favoriteDevices.remove(deviceId); }
+      if (favorite) {
+        favoriteDevices.add(deviceId);
+      } else {
+        favoriteDevices.remove(deviceId);
+      }
     }
     notifyListeners();
     return null;
@@ -587,6 +611,23 @@ class AppState extends ChangeNotifier {
     final dataDir = r['data_dir'] as String?;
     if (dataDir == null || dataDir.isEmpty) return null;
     return '$dataDir${Platform.pathSeparator}downloads';
+  }
+
+  /// 接受入站传输时核心实际写入的目录。
+  /// Android 下核心永远写入应用私有暂存目录（分区存储下公共路径不可直接写），
+  /// 完成后由 receiveTreeUri 的 SAF 导出把文件复制到用户选择的公共目录；
+  /// 桌面端优先使用已配置目录，否则弹出目录选择。
+  Future<String?> coreReceiveDirForAccept({bool pickOnDesktop = true}) async {
+    if (Platform.isAndroid) {
+      final r = await core.call('data_dir');
+      final dataDir = r['data_dir'] as String?;
+      if (dataDir == null || dataDir.isEmpty) return null;
+      return '$dataDir${Platform.pathSeparator}downloads';
+    }
+    final configured = defaultDownloadDir;
+    if (configured != null && configured.isNotEmpty) return configured;
+    if (!pickOnDesktop) return null;
+    return getDirectoryPath();
   }
 
   Future<String?> cancelTransfer(String transferId) async {
@@ -689,9 +730,40 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _exportReceivedToTree(TransferItem t) async {
+    if (_exportedTransfers.contains(t.transferId) ||
+        !_exportingTransfers.add(t.transferId)) {
+      return;
+    }
+    try {
+      final exported = await const MethodChannel(
+        'com.lunote.lunote_app/platform',
+      ).invokeMethod<bool>(
+        'exportToTree',
+        {'path': t.localPath, 'treeUri': receiveTreeUri},
+      );
+      if (exported != true) {
+        _exportingTransfers.remove(t.transferId);
+        await _notifyExportFailure(t, '系统拒绝写入所选目录，请重新选择接收目录');
+      } else {
+        _exportingTransfers.remove(t.transferId);
+        _exportedTransfers.add(t.transferId);
+      }
+    } catch (e) {
+      _exportingTransfers.remove(t.transferId);
+      await _notifyExportFailure(t, '导出失败：$e');
+    }
+  }
+
+  Future<void> _notifyExportFailure(TransferItem t, String reason) async {
+    if (!Platform.isAndroid) return;
     try {
       await const MethodChannel('com.lunote.lunote_app/platform').invokeMethod(
-        'exportToTree', {'path': t.localPath, 'treeUri': receiveTreeUri},
+        'notifyTransfer',
+        {
+          'title': '文件已接收，但保存到公共目录失败',
+          'body': '${t.fileName}：$reason',
+          'transfer_id': t.transferId,
+        },
       );
     } catch (_) {}
   }
@@ -729,7 +801,8 @@ class AppState extends ChangeNotifier {
 
   Future<Map<String, dynamic>> diagnostics() async {
     final r = await core.call('diagnostics');
-    return (r['diagnostics'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
+    return (r['diagnostics'] as Map?)?.cast<String, dynamic>() ??
+        <String, dynamic>{};
   }
 
   Future<Map<String, dynamic>> exportRecords(String password, String outPath) =>

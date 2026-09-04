@@ -23,3 +23,6 @@ data/
 *.key
 *.pem
 *.crt
+
+# 本地打包临时目录
+.build/

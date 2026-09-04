@@ -1,9 +1,11 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../core/models.dart';
 import '../../core/platform_files.dart';
+import '../../state/app_state.dart';
 import '../lunote_theme.dart';
 
 class MediaPreviewPage extends StatelessWidget {
@@ -22,7 +24,11 @@ class MediaPreviewPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cc = LunoteColors.of(context);
+    final state = context.read<AppState>();
     final path = transfer.localPath!;
+    final treeUri = (!transfer.isOutgoing && state.receiveTreeUri != null)
+        ? state.receiveTreeUri
+        : null;
     return Scaffold(
       backgroundColor: const Color(0xF2141822),
       appBar: AppBar(
@@ -38,8 +44,10 @@ class MediaPreviewPage extends StatelessWidget {
           ),
           IconButton(
             tooltip: '打开所在文件夹',
-            onPressed: () =>
-                _run(context, PlatformFiles.openContainingFolder(path)),
+            onPressed: () => _run(
+              context,
+              PlatformFiles.openContainingFolder(path, treeUri: treeUri),
+            ),
             icon: const Icon(Icons.folder_open_rounded),
           ),
           const SizedBox(width: 6),

@@ -2,7 +2,7 @@ name: lunote_app
 description: "月笺 Lunote — 无云端、无账号、无互联网依赖的局域网通信与文件传输应用"
 publish_to: 'none'
 
-version: 1.5.2+9
+version: 1.5.4+11
 
 environment:
   sdk: ^3.13.0
