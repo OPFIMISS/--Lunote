@@ -476,8 +476,7 @@ class MainActivity : FlutterActivity() {
                             Intent.FLAG_ACTIVITY_NEW_TASK,
                     )
                 }
-                if (view.resolveActivity(packageManager) != null) {
-                    startActivity(view)
+                if (tryStartDirectoryIntent(view)) {
                     return true
                 }
                 // 魅族部分系统文件管理器不注册 vnd.android.document/directory，
@@ -487,17 +486,22 @@ class MainActivity : FlutterActivity() {
                     type = DocumentsContract.Document.MIME_TYPE_DIR
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                if (treeView.resolveActivity(packageManager) != null) {
-                    startActivity(treeView)
+                if (tryStartDirectoryIntent(treeView)) {
                     return true
                 }
+                // 某些魅族固件对隐式 VIEW 的 resolveActivity 返回为空，
+                // 但 DocumentsUI 的 FilesActivity 实际可正常处理目录 URI。
+                val explicit = Intent(view).setClassName(
+                    "com.android.documentsui",
+                    "com.android.documentsui.files.FilesActivity",
+                )
+                if (tryStartDirectoryIntent(explicit)) return true
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     val picker = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
                         putExtra(DocumentsContract.EXTRA_INITIAL_URI, dirDoc)
                     }
-                    if (picker.resolveActivity(packageManager) != null) {
-                        startActivity(picker)
+                    if (tryStartDirectoryIntent(picker)) {
                         return true
                     }
                 }
@@ -545,6 +549,16 @@ class MainActivity : FlutterActivity() {
         }
         // 不再回退到 ACTION_OPEN_DOCUMENT_TREE——那是“选择目录”界面而不是查看目录。
         return false
+    }
+
+    private fun tryStartDirectoryIntent(intent: Intent): Boolean {
+        return try {
+            startActivity(intent)
+            true
+        } catch (e: Exception) {
+            android.util.Log.w("Lunote", "目录 Intent 启动失败: ${e.message}")
+            false
+        }
     }
 
     private fun externalDocUriForPath(path: String): Uri? {
