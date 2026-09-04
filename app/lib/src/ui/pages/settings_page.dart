@@ -24,11 +24,25 @@ class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _nameCtrl;
   bool _loadingDiagnostics = false;
   Map<String, dynamic>? _diagnostics;
+  String? _nativeReceiveFolderName;
 
   @override
   void initState() {
     super.initState();
     _nameCtrl = TextEditingController(text: AppState.instance.deviceName);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final uri = context.read<AppState>().receiveTreeUri;
+    if (Platform.isAndroid && uri != null && uri.isNotEmpty) {
+      _nativeTreeLabel(uri).then((name) {
+        if (mounted && name != _nativeReceiveFolderName) {
+          setState(() => _nativeReceiveFolderName = name);
+        }
+      });
+    }
   }
 
   @override
@@ -47,6 +61,16 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (_) {
       return treeUri;
     }
+  }
+
+  Future<String> _nativeTreeLabel(String treeUri) async {
+    try {
+      final name = await _platform.invokeMethod<String>('getTreeDisplayName', {
+        'treeUri': treeUri,
+      });
+      if (name != null && name.isNotEmpty) return name;
+    } catch (_) {}
+    return _treeLabel(treeUri);
   }
 
   Future<void> _openReceiveDirectory() async {
@@ -675,7 +699,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         child: Text(
                           Platform.isAndroid
                               ? (state.receiveTreeUri != null
-                                    ? 'Android 公共目录：${_treeLabel(state.receiveTreeUri!)}（文件先存应用暂存，完成后自动导出）'
+                                    ? 'Android 公共目录：${_nativeReceiveFolderName ?? _treeLabel(state.receiveTreeUri!)}（文件先存应用暂存，完成后自动导出）'
                                     : '默认（应用私有 downloads，可在系统文件管理器导出目录查看）')
                               : (state.defaultDownloadDir ??
                                     '默认（数据目录\\downloads）'),

@@ -48,6 +48,7 @@ class MainActivity : FlutterActivity() {
             val path = call.argument<String>("path").orEmpty()
             when (call.method) {
                 "getDeviceModel" -> result.success(deviceModel())
+                "getTreeDisplayName" -> result.success(treeDisplayName(call.argument<String>("treeUri")))
                 "notifyTransfer" -> {
                     notifyTransfer(
                         call.argument<String>("title") ?: "月笺传输",
@@ -100,6 +101,26 @@ class MainActivity : FlutterActivity() {
             !model.startsWith(manufacturer, ignoreCase = true)
         ) "$manufacturer $model" else model
         return raw.replace(Regex("\\s+"), " ").trim().ifEmpty { "Android 设备" }
+    }
+
+    private fun treeDisplayName(treeUriString: String?): String? {
+        if (treeUriString.isNullOrBlank()) return null
+        return try {
+            val tree = Uri.parse(treeUriString)
+            val doc = DocumentsContract.buildDocumentUriUsingTree(
+                tree,
+                DocumentsContract.getTreeDocumentId(tree),
+            )
+            contentResolver.query(
+                doc,
+                arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -458,6 +479,27 @@ class MainActivity : FlutterActivity() {
                 if (view.resolveActivity(packageManager) != null) {
                     startActivity(view)
                     return true
+                }
+                // 魅族部分系统文件管理器不注册 vnd.android.document/directory，
+                // 用原始 tree URI 再尝试一次，仍能直接落到已授权目录。
+                val treeView = Intent(Intent.ACTION_VIEW).apply {
+                    data = tree
+                    type = DocumentsContract.Document.MIME_TYPE_DIR
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                if (treeView.resolveActivity(packageManager) != null) {
+                    startActivity(treeView)
+                    return true
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val picker = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                        putExtra(DocumentsContract.EXTRA_INITIAL_URI, dirDoc)
+                    }
+                    if (picker.resolveActivity(packageManager) != null) {
+                        startActivity(picker)
+                        return true
+                    }
                 }
             } catch (e: Exception) {
                 android.util.Log.w("Lunote", "无法查看 SAF 接收目录: ${e.message}")
