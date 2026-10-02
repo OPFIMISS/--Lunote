@@ -63,7 +63,7 @@ See `docs/协议.md`, `docs/安全模型.md`, and `docs/交付报告.md` for the
 
 Use `tools/publish_github_release.ps1` to upload the tagged APK, Windows installer, single-file portable EXE, complete ZIP, release notes, and SHA-256 checksums after running `gh auth login`. The portable EXE runs directly without manual installation or extraction and without a visible console window.
 
-Version 2.0.0 is completing release verification. Published downloads are available on the [Releases page](https://github.com/OPFIMISS/--Lunote/releases).
+**Version 2.0.0 is published**: [download this release](https://github.com/OPFIMISS/--Lunote/releases/tag/v2.0.0). APK, Windows installer, single-file portable EXE, full ZIP, and SHA-256 checksums are available. All five remote asset digests match the local files, and all public download URLs returned HTTP 200.
 
 ## 2.0 Behavior
 

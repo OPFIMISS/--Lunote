@@ -39,7 +39,7 @@ Android / Windows 10+ / Linux，设备直连（E2E），默认加密，本地加
 
 发布页资产由 `tools/publish_github_release.ps1` 校验并上传，包含 APK、Windows 安装版、单 EXE 便携版、ZIP 和 SHA-256 校验清单。便携版双击启动，不需要手动安装或解压，也不打开可见 CMD 窗口。
 
-2.0.0 正在完成发布验证，尚未上传。计划包含 APK、Windows 安装版、单文件便携版和 ZIP。已上传版本请查看 [Releases](https://github.com/OPFIMISS/--Lunote/releases)。
+**2.0.0 已发布**：[下载此版本](https://github.com/OPFIMISS/--Lunote/releases/tag/v2.0.0)。包含 APK、Windows 安装版、单 EXE 便携版、ZIP 和 SHA-256 校验清单；五个下载资产的远端哈希与本地一致，公开链接均已验证 HTTP 200。
 
 - 项目根目录：`D:\Lunote 2\moonletter`
 - 技术栈：Rust（核心：tokio + rustls 1.3 + Ed25519 + AES-256-GCM）＋ Flutter（UI）
