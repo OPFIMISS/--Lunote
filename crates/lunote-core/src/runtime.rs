@@ -309,6 +309,15 @@ impl Runtime {
 
     /// 发送文件/文件夹（自动展开目录为相对路径清单，逐文件流式传输）
     pub async fn send_paths(&self, device_id: &str, paths: Vec<PathBuf>) -> Result<Vec<String>> {
+        self.send_paths_in_thread(device_id, paths, None).await
+    }
+
+    pub async fn send_paths_in_thread(
+        &self,
+        device_id: &str,
+        paths: Vec<PathBuf>,
+        thread_id: Option<&str>,
+    ) -> Result<Vec<String>> {
         let mut files = Vec::new();
         for p in &paths {
             let meta = tokio::fs::metadata(p).await?;
@@ -323,7 +332,9 @@ impl Runtime {
                 anyhow::bail!("不支持的路径类型: {}", p.display());
             }
         }
-        self.transfers.send_files(device_id, files).await
+        self.transfers
+            .send_files_in_thread(device_id, files, thread_id)
+            .await
     }
 
     pub async fn accept_transfer(&self, transfer_id: &str, dest_dir: &Path) -> Result<()> {

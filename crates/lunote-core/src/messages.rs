@@ -52,8 +52,39 @@ pub enum Control {
         title: Option<String>,
         ts_ms: i64,
     },
+    ReliableMessage {
+        id: String,
+        text: String,
+        url: Option<String>,
+        ts_ms: i64,
+        #[serde(default)]
+        thread_id: Option<String>,
+    },
+    MessageAck {
+        id: String,
+    },
+    ThreadState {
+        id: String,
+        title: String,
+        deleted: bool,
+    },
+    ThreadAck {
+        id: String,
+        deleted: bool,
+    },
+    NoteIndex {
+        versions: Vec<crate::notes::NoteVersion>,
+    },
+    NoteRequest {
+        ids: Vec<String>,
+    },
+    NoteBatch {
+        notes: Vec<crate::notes::Note>,
+    },
     FileOffer {
         transfer_id: String,
+        #[serde(default)]
+        thread_id: Option<String>,
         name: String,
         size: u64,
         /// 可选：发送端已算出的完整文件 SHA-256

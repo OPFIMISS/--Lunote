@@ -61,6 +61,7 @@ pub struct SessionManager {
     bus: EventBus,
     discovery: Arc<Discovery>,
     pub transfers: Arc<TransferManager>,
+    pub notes: Arc<crate::notes::Notes>,
     acceptor: TlsAcceptor,
     connector: TlsConnector,
     listener: Mutex<Option<Arc<TcpListener>>>,
@@ -69,6 +70,7 @@ pub struct SessionManager {
     connection_gen: AtomicU64,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
+    outbox_wakeup: tokio::sync::Notify,
     listener_closed_tx: std::sync::mpsc::Sender<()>,
     listener_closed_rx: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     /// “同名同 IP 新设备自动信任”开关（默认开，由 Runtime 持久化设置）
@@ -105,6 +107,7 @@ impl SessionManager {
             .context("客户端证书配置失败")?;
 
         let (closed_tx, closed_rx) = std::sync::mpsc::channel::<()>();
+        let notes = crate::notes::Notes::open(store.clone(), identity.device_id.clone())?;
         Ok(Arc::new(Self {
             identity,
             trust,
@@ -112,6 +115,7 @@ impl SessionManager {
             bus,
             discovery,
             transfers,
+            notes,
             acceptor: TlsAcceptor::from(Arc::new(server_cfg)),
             connector: TlsConnector::from(Arc::new(client_cfg)),
             listener: Mutex::new(None),
@@ -120,6 +124,7 @@ impl SessionManager {
             connection_gen: AtomicU64::new(0),
             shutdown: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             shutdown_tx: tokio::sync::watch::channel(false).0,
+            outbox_wakeup: tokio::sync::Notify::new(),
             listener_closed_tx: closed_tx,
             listener_closed_rx: Mutex::new(Some(closed_rx)),
             auto_trust,
@@ -146,6 +151,8 @@ impl SessionManager {
         *self.listener.lock().unwrap() = Some(listener.clone());
         let this = self.clone();
         tokio::spawn(async move { this.accept_loop(listener).await });
+        let this = self.clone();
+        tokio::spawn(async move { this.outbox_loop().await });
         tracing::info!("会话监听启动 tcp_port={}", local.port());
         Ok(local.port())
     }
@@ -178,6 +185,90 @@ impl SessionManager {
             }
         }
         let _ = self.listener_closed_tx.send(());
+    }
+
+    async fn outbox_loop(self: Arc<Self>) {
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let mut tick = tokio::time::interval(Duration::from_secs(3));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.changed() => break,
+                _ = tick.tick() => {},
+                _ = self.outbox_wakeup.notified() => {},
+            }
+            if self.shutdown.load(Ordering::Relaxed) {
+                break;
+            }
+            let mut peers = self.store.pending_peers().unwrap_or_default();
+            peers.extend(self.notes.peers());
+            peers.sort();
+            peers.dedup();
+            for peer in peers {
+                if self.shutdown.load(Ordering::Relaxed) {
+                    return;
+                }
+                if !self.trust.lock().unwrap().is_trusted(&peer) {
+                    continue;
+                }
+                // A failed/offline peer must not block the queue indefinitely.
+                let _ =
+                    tokio::time::timeout(Duration::from_secs(12), self.flush_outbox(&peer)).await;
+            }
+        }
+    }
+
+    pub fn wake_outbox(&self) {
+        self.outbox_wakeup.notify_one();
+    }
+
+    async fn flush_outbox(self: &Arc<Self>, peer: &str) -> Result<()> {
+        self.ensure_session(peer).await?;
+        if self.notes.allows(peer) && self.trust.lock().unwrap().is_trusted(peer) {
+            self.send_control(
+                peer,
+                Control::NoteIndex {
+                    versions: self.notes.versions(),
+                },
+            )
+            .await?;
+        }
+        for thread in self
+            .store
+            .threads(Some(peer))?
+            .into_iter()
+            .filter(|t| t.sync_pending)
+        {
+            self.send_control(
+                peer,
+                Control::ThreadState {
+                    id: thread.id,
+                    title: thread.title,
+                    deleted: thread.deleted,
+                },
+            )
+            .await?;
+        }
+        for message in self.store.pending_messages(peer)? {
+            if self.shutdown.load(Ordering::Relaxed) {
+                break;
+            }
+            if !self.trust.lock().unwrap().is_trusted(peer) {
+                break;
+            }
+            self.send_control(
+                peer,
+                Control::ReliableMessage {
+                    id: message.id,
+                    text: message.text,
+                    url: message.url,
+                    ts_ms: message.ts_ms,
+                    thread_id: message.thread_id,
+                },
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     async fn server_conn(self: Arc<Self>, tcp: TcpStream, addr: SocketAddr) -> Result<()> {
@@ -757,6 +848,151 @@ impl SessionManager {
                     return Ok(());
                 };
                 match control {
+                    Control::NoteIndex { versions } => {
+                        if self.notes.allows(device_id)
+                            && self.trust.lock().unwrap().is_trusted(device_id)
+                        {
+                            let ids = self.notes.needed(&versions)?;
+                            for chunk in ids.chunks(16) {
+                                self.send_control(
+                                    device_id,
+                                    Control::NoteRequest {
+                                        ids: chunk.to_vec(),
+                                    },
+                                )
+                                .await?;
+                            }
+                        }
+                        Ok(())
+                    }
+                    Control::NoteRequest { ids } => {
+                        if self.notes.allows(device_id)
+                            && self.trust.lock().unwrap().is_trusted(device_id)
+                        {
+                            if ids.len() > 16 || ids.iter().any(|id| id.len() > 128) {
+                                bail!("笔记请求过大");
+                            }
+                            let notes = self
+                                .notes
+                                .list()
+                                .into_iter()
+                                .filter(|n| ids.contains(&n.id))
+                                .collect();
+                            self.send_control(device_id, Control::NoteBatch { notes })
+                                .await?;
+                        }
+                        Ok(())
+                    }
+                    Control::NoteBatch { notes } => {
+                        if self.notes.allows(device_id)
+                            && self.trust.lock().unwrap().is_trusted(device_id)
+                            && self.notes.merge(notes)?
+                        {
+                            self.bus.emit(CoreEvent::NotesChanged);
+                            self.wake_outbox();
+                        }
+                        Ok(())
+                    }
+                    Control::ThreadState { id, title, deleted } => {
+                        if !self.trust.lock().unwrap().is_trusted(device_id) {
+                            bail!("临时对话仅允许可信设备");
+                        }
+                        if deleted {
+                            self.transfers.cancel_thread(device_id, &id).await?;
+                        }
+                        self.store
+                            .apply_thread(device_id, &id, &title, deleted, false)?;
+                        let state = self
+                            .store
+                            .threads(Some(device_id))?
+                            .into_iter()
+                            .find(|t| t.id == id)
+                            .ok_or_else(|| anyhow!("临时对话不存在"))?;
+                        self.send_control(
+                            device_id,
+                            Control::ThreadAck {
+                                id,
+                                deleted: state.deleted,
+                            },
+                        )
+                        .await?;
+                        self.bus.emit(CoreEvent::RecordsChanged);
+                        Ok(())
+                    }
+                    Control::ThreadAck { id, deleted } => {
+                        if self.trust.lock().unwrap().is_trusted(device_id) {
+                            self.store.acknowledge_thread(device_id, &id, deleted)?;
+                            self.bus.emit(CoreEvent::RecordsChanged);
+                        }
+                        Ok(())
+                    }
+                    Control::ReliableMessage {
+                        id,
+                        text,
+                        url,
+                        ts_ms,
+                        thread_id,
+                    } => {
+                        if !self.trust.lock().unwrap().is_trusted(device_id) {
+                            bail!("离线消息仅允许可信设备");
+                        }
+                        if uuid::Uuid::parse_str(&id).is_err()
+                            || text.is_empty()
+                            || text.len() > MAX_TEXT_LEN
+                            || url.as_ref().is_some_and(|u| u.len() > MAX_LINK_LEN)
+                        {
+                            bail!("离线消息格式非法");
+                        }
+                        let conversation = if let Some(thread_id) = thread_id {
+                            let thread = self
+                                .store
+                                .threads(Some(device_id))?
+                                .into_iter()
+                                .find(|t| t.id == thread_id)
+                                .ok_or_else(|| anyhow!("临时对话尚未同步"))?;
+                            if thread.deleted {
+                                self.send_control(device_id, Control::MessageAck { id })
+                                    .await?;
+                                return Ok(());
+                            }
+                            thread.conversation_id
+                        } else {
+                            device_id.to_string()
+                        };
+                        let kind = if url.is_some() {
+                            MsgKind::Link
+                        } else {
+                            MsgKind::Text
+                        };
+                        let fresh = self.store.receive_queued_message(
+                            &conversation,
+                            &id,
+                            &text,
+                            url.as_deref(),
+                            ts_ms,
+                        )?;
+                        self.send_control(device_id, Control::MessageAck { id: id.clone() })
+                            .await?;
+                        if fresh {
+                            self.bus.emit(CoreEvent::MessageReceived {
+                                device_id: conversation,
+                                message_id: id,
+                                kind,
+                                text,
+                                ts_ms,
+                                from_untrusted: false,
+                            });
+                            self.bus.emit(CoreEvent::RecordsChanged);
+                        }
+                        Ok(())
+                    }
+                    Control::MessageAck { id } => {
+                        if self.trust.lock().unwrap().is_trusted(device_id) {
+                            self.store.acknowledge_message(device_id, &id)?;
+                            self.bus.emit(CoreEvent::RecordsChanged);
+                        }
+                        Ok(())
+                    }
                     Control::Text { id, text, ts_ms } => {
                         if text.len() > MAX_TEXT_LEN {
                             bail!("文本超长（{} 字节）", text.len());
@@ -854,26 +1090,50 @@ impl SessionManager {
         if text.is_empty() || text.len() > MAX_TEXT_LEN {
             bail!("文本长度非法（1~{} 字节）", MAX_TEXT_LEN);
         }
-        self.ensure_session(device_id).await?;
+        if !self.trust.lock().unwrap().is_trusted(device_id) {
+            bail!("请先信任该设备再发送消息");
+        }
         let id = crate::messages::new_id();
         let ts = now_ms();
-        let control = Control::Text {
-            id: id.clone(),
-            text: text.to_string(),
-            ts_ms: ts,
-        };
-        self.send_control(device_id, control).await?;
-        self.store.append_message(
-            device_id,
-            &id,
-            Direction::Outgoing,
-            MsgKind::Text,
-            text,
-            None,
-            ts,
-        )?;
+        self.store.enqueue_message(device_id, &id, text, None, ts)?;
+        self.wake_outbox();
         self.bus.emit(CoreEvent::MessageSent {
             device_id: device_id.to_string(),
+            message_id: id.clone(),
+            kind: MsgKind::Text,
+            text: text.to_string(),
+            ts_ms: ts,
+        });
+        self.bus.emit(CoreEvent::RecordsChanged);
+        Ok(id)
+    }
+
+    /// 发送链接
+    pub async fn send_thread_text(
+        self: &Arc<Self>,
+        device_id: &str,
+        thread_id: &str,
+        text: &str,
+    ) -> Result<String> {
+        if !self.trust.lock().unwrap().is_trusted(device_id) {
+            bail!("请先信任该设备");
+        }
+        if text.is_empty() || text.len() > MAX_TEXT_LEN {
+            bail!("文本长度非法");
+        }
+        let thread = self
+            .store
+            .threads(Some(device_id))?
+            .into_iter()
+            .find(|t| t.id == thread_id && !t.deleted && !t.hidden)
+            .ok_or_else(|| anyhow!("临时对话已删除"))?;
+        let id = crate::messages::new_id();
+        let ts = now_ms();
+        self.store
+            .enqueue_message(&thread.conversation_id, &id, text, None, ts)?;
+        self.wake_outbox();
+        self.bus.emit(CoreEvent::MessageSent {
+            device_id: thread.conversation_id,
             message_id: id.clone(),
             kind: MsgKind::Text,
             text: text.to_string(),
@@ -893,29 +1153,21 @@ impl SessionManager {
         if url.is_empty() || url.len() > MAX_LINK_LEN {
             bail!("链接长度非法");
         }
-        self.ensure_session(device_id).await?;
+        if !self.trust.lock().unwrap().is_trusted(device_id) {
+            bail!("请先信任该设备再发送消息");
+        }
         let id = crate::messages::new_id();
         let ts = now_ms();
-        let control = Control::Link {
-            id: id.clone(),
-            url: url.to_string(),
-            title: title.map(|s| s.to_string()),
-            ts_ms: ts,
-        };
-        self.send_control(device_id, control).await?;
         let text = match title {
             Some(t) => format!("{} {}", t, url),
             None => url.to_string(),
         };
-        self.store.append_message(
-            device_id,
-            &id,
-            Direction::Outgoing,
-            MsgKind::Link,
-            &text,
-            Some(url),
-            ts,
-        )?;
+        if text.len() > MAX_TEXT_LEN {
+            bail!("链接标题超长");
+        }
+        self.store
+            .enqueue_message(device_id, &id, &text, Some(url), ts)?;
+        self.wake_outbox();
         self.bus.emit(CoreEvent::MessageSent {
             device_id: device_id.to_string(),
             message_id: id.clone(),

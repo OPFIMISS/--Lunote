@@ -12,8 +12,9 @@ import 'chat_page.dart';
 import 'devices_page.dart';
 import 'settings_page.dart';
 import 'transfers_page.dart';
+import 'notes_page.dart';
 
-enum _Nav { devices, conversations, transfers, settings }
+enum _Nav { devices, conversations, transfers, notes, settings }
 
 /// 应用壳：宽屏（桌面）左侧舒展导航；窄屏（手机）底部导航 + 全屏对话。
 class ShellPage extends StatefulWidget {
@@ -73,13 +74,19 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
     try {
       const channel = MethodChannel('com.lunote.lunote_app/platform');
       final id = await channel.invokeMethod<String>('getPendingTransferId');
-      final action = await channel.invokeMethod<String>('getPendingTransferAction');
+      final action = await channel.invokeMethod<String>(
+        'getPendingTransferAction',
+      );
       if (!mounted || id == null || id.isEmpty) return;
       setState(() => _nav = _Nav.transfers);
       if (action == 'reject') {
-        final error = await context.read<AppState>().rejectTransfer(id, '通过通知拒绝');
+        final error = await context.read<AppState>().rejectTransfer(
+          id,
+          '通过通知拒绝',
+        );
         if (error != null && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(error)));
         }
       }
     } on MissingPluginException {
@@ -106,7 +113,9 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
     _handlingShare = true;
     try {
       const channel = MethodChannel('com.lunote.lunote_app/platform');
-      final raw = await channel.invokeMethod<Map<dynamic, dynamic>>('getPendingShare');
+      final raw = await channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getPendingShare',
+      );
       if (!mounted || raw == null) return;
       final text = raw['text'] as String?;
       final sharedPaths = ((raw['paths'] as List?) ?? const [])
@@ -116,14 +125,15 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
       final legacyPath = raw['path'] as String?;
       final paths = sharedPaths.isNotEmpty
           ? sharedPaths
-          : (legacyPath == null || legacyPath.isEmpty ? const <String>[] : [legacyPath]);
+          : (legacyPath == null || legacyPath.isEmpty
+                ? const <String>[]
+                : [legacyPath]);
       final state = context.read<AppState>();
       final peers = await _waitForOnlinePeers(state);
       if (!mounted) return;
       if (peers.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('已收到分享内容，但当前没有在线设备')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('已收到分享内容，但当前没有在线设备')));
         return;
       }
       if (!mounted) return;
@@ -147,7 +157,12 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
               },
             ),
           ),
-          actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('取消'))],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('取消'),
+            ),
+          ],
         ),
       );
       if (!mounted || selected == null) return;
@@ -171,9 +186,8 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
       // Windows/Linux 没有 Android 分享入口。
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('处理分享内容失败：$e')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('处理分享内容失败：$e')));
       }
     } finally {
       _handlingShare = false;
@@ -279,6 +293,7 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
                 '传输',
                 badge: pendingTransfers > 0 ? pendingTransfers : null,
               ),
+              _navItem(_Nav.notes, Icons.note_alt_outlined, '笔记'),
               _navItem(_Nav.settings, Icons.settings_rounded, '设置'),
               const Spacer(),
               _myDeviceCard(state),
@@ -291,6 +306,7 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
             _Nav.conversations => _conversationsPage(state),
             _Nav.transfers => const TransfersPage(),
             _Nav.settings => const SettingsPage(),
+            _Nav.notes => const NotesPage(),
           },
         ),
       ],
@@ -308,6 +324,7 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
           _Nav.conversations => _conversationsPage(state),
           _Nav.transfers => const TransfersPage(),
           _Nav.settings => const SettingsPage(),
+          _Nav.notes => const NotesPage(),
         },
       ),
       bottomNavigationBar: NavigationBar(
@@ -338,6 +355,11 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
               child: Icon(Icons.swap_vert_rounded, color: cc.gold),
             ),
             label: '传输',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.note_alt_outlined, color: cc.moonDim),
+            selectedIcon: Icon(Icons.note_alt_rounded, color: cc.gold),
+            label: '笔记',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_rounded, color: cc.moonDim),

@@ -1,34 +1,51 @@
 param(
-    [string]$Tag = "v1.3.0",
-    [string]$Repository = "OPFIMISS/--Lunote"
+    [string]$Tag = "v2.0.0",
+    [string]$Repository = "OPFIMISS/--Lunote",
+    [switch]$Draft
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$apk = Join-Path $root 'dist\月笺.apk'
-$notes = Join-Path $root 'RELEASE_NOTES_1.3.0.md'
+$version = $Tag.TrimStart('v')
+if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Tag must have format vMAJOR.MINOR.PATCH' }
+$notes = Join-Path $root "RELEASE_NOTES_$version.md"
+$assets = @(
+    (Join-Path $root "dist/Lunote-$version.apk"),
+    (Join-Path $root "dist/Lunote-$version-windows-x64-setup.exe"),
+    (Join-Path $root "dist/Lunote-$version-windows-x64-portable.exe"),
+    (Join-Path $root "dist/Lunote-$version-windows-x64.zip")
+)
 
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     throw 'GitHub CLI gh is required. Install gh and run gh auth login first.'
 }
-if (-not (Test-Path $apk)) { throw "APK not found: $apk" }
+foreach ($asset in $assets) {
+    if (-not (Test-Path -LiteralPath $asset)) { throw "Asset not found: $asset" }
+}
 if (-not (Test-Path $notes)) { throw "Release notes not found: $notes" }
 
-$tagExists = git tag --list $Tag
+$tagExists = git -C $root tag --list $Tag
 if ($tagExists -ne $Tag) { throw "Local tag not found: $Tag" }
 
-$hash = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash
-$body = Get-Content -LiteralPath $notes -Raw -Encoding UTF8
-$body += [Environment]::NewLine + [Environment]::NewLine + "APK SHA-256: $hash"
-$tmp = Join-Path $env:TEMP "lunote-release-$Tag.md"
-Set-Content -LiteralPath $tmp -Value $body -Encoding UTF8
+$sums = Join-Path $root "dist/Lunote-$version-SHA256SUMS.txt"
+$lines = foreach ($asset in $assets) {
+    $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+    "$hash  $([IO.Path]::GetFileName($asset))"
+}
+$lines | Set-Content -LiteralPath $sums -Encoding ASCII
+$assets += $sums
 
 gh release view $Tag --repo $Repository *> $null
 if ($LASTEXITCODE -eq 0) {
-    gh release upload $Tag $apk --repo $Repository --clobber
-    gh release edit $Tag --repo $Repository --notes-file $tmp --title "月笺 Lunote $Tag"
+    gh release upload $Tag @assets --repo $Repository --clobber
+    if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed' }
+    gh release edit $Tag --repo $Repository --notes-file $notes --title "月笺 Lunote $Tag"
 } else {
-    gh release create $Tag $apk --repo $Repository --title "月笺 Lunote $Tag" --notes-file $tmp --verify-tag
+    $arguments = @('release', 'create', $Tag) + $assets + @('--repo', $Repository,
+        '--title', "月笺 Lunote $Tag", '--notes-file', $notes, '--verify-tag')
+    if ($Draft) { $arguments += '--draft' }
+    gh @arguments
 }
+if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
 Write-Output "Release $Tag published to $Repository"
-Write-Output "APK SHA-256: $hash"
+$lines | Write-Output

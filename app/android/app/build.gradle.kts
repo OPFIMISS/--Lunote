@@ -31,9 +31,20 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // Preserve the existing publishing certificate for in-place updates.
             signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
+    // Release builds must explicitly point at the existing publishing key.
+    val publishingKey = System.getenv("LUNOTE_SIGNING_KEYSTORE")
+    if (!publishingKey.isNullOrBlank()) {
+        signingConfigs.getByName("debug").storeFile = file(publishingKey)
+    }
+    gradle.taskGraph.whenReady {
+        if (allTasks.any { it.project == project && it.name in listOf("assembleRelease", "bundleRelease") }
+            && publishingKey.isNullOrBlank()) {
+            throw GradleException("Set LUNOTE_SIGNING_KEYSTORE to the existing publishing key before a release build")
         }
     }
 }

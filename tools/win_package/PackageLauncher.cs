@@ -29,26 +29,30 @@ static class PackageLauncher
         string zip = Path.Combine(Path.GetTempPath(),
             "lunote-payload-" + Guid.NewGuid().ToString("N") + ".zip");
         Assembly asm = Assembly.GetExecutingAssembly();
-        using (Stream s = asm.GetManifestResourceStream("PAYLOAD"))
-        using (FileStream fs = File.Create(zip))
+        try
         {
-            s.CopyTo(fs);
-        }
-        using (ZipArchive archive = ZipFile.OpenRead(zip))
-        {
-            foreach (ZipArchiveEntry entry in archive.Entries)
+            using (Stream s = asm.GetManifestResourceStream("PAYLOAD"))
+            using (FileStream fs = File.Create(zip))
             {
-                if (string.IsNullOrEmpty(entry.Name)) continue;
-                string outPath = Path.GetFullPath(
-                    Path.Combine(dir, entry.FullName));
-                if (!outPath.StartsWith(Path.GetFullPath(dir),
-                        StringComparison.OrdinalIgnoreCase))
-                    continue;
-                Directory.CreateDirectory(Path.GetDirectoryName(outPath));
-                entry.ExtractToFile(outPath, true);
+                if (s == null) throw new InvalidDataException("Missing application payload");
+                s.CopyTo(fs);
+            }
+            string root = Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            using (ZipArchive archive = ZipFile.OpenRead(zip))
+            {
+                foreach (ZipArchiveEntry entry in archive.Entries)
+                {
+                    if (string.IsNullOrEmpty(entry.Name)) continue;
+                    string outPath = Path.GetFullPath(Path.Combine(dir, entry.FullName));
+                    if (!outPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException("Invalid payload path");
+                    Directory.CreateDirectory(Path.GetDirectoryName(outPath));
+                    entry.ExtractToFile(outPath, true);
+                }
             }
         }
-        File.Delete(zip);
+        finally { if (File.Exists(zip)) File.Delete(zip); }
         return Path.Combine(dir, "lunote_app.exe");
     }
 
@@ -78,13 +82,17 @@ static class PackageLauncher
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
-            string dest = Path.Combine(Path.GetTempPath(), "LunotePortable");
-            string exe = Path.Combine(dest, "lunote_app.exe");
-            if (!File.Exists(exe)) exe = ExtractPayload(dest);
-            Process p = Process.Start(
-                new ProcessStartInfo(exe) { WorkingDirectory = dest });
-            p.WaitForExit();
-            try { Directory.Delete(dest, true); } catch { }
+            string dest = Path.Combine(Path.GetTempPath(), "LunotePortable-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                string exe = ExtractPayload(dest);
+                using (Process p = Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = dest }))
+                {
+                    if (p == null) throw new InvalidOperationException("Application did not start");
+                    p.WaitForExit();
+                }
+            }
+            finally { try { Directory.Delete(dest, true); } catch { } }
         }
 #endif
     }

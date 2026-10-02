@@ -1,11 +1,19 @@
 # 月笺 Lunote
 
-当前版本：**1.4.1（6）**。保持 applicationId 与签名配置不变，支持覆盖更新 APK。
+当前版本：**2.0.0（15）**。保持 applicationId 与签名配置不变，支持覆盖更新 APK。
 
 无云端、无账号、无互联网依赖的局域网通信与文件传输应用。
 Android / Windows 10+ / Linux，设备直连（E2E），默认加密，本地加密记录。
 
 文件冲突策略支持自动重命名、覆盖或跳过，并在 PC/Android 双端持久化；设置页提供设备诊断面板，可查看监听端口、在线设备、发现统计和收发目录。
+
+2.0 新增离线可靠消息、双方独立临时对话、加密笔记同步、方形卡片笔记 UI、全文消息操作，以及 Windows 安装版/单文件便携版/ZIP 发布包。
+
+- 离线消息保存在发送方的加密队列中；无服务器时必须双方同时在线才能送达。发送方退出后，重新打开软件会继续发送；“已送达”表示接收方保存成功，不等于已读。
+- 临时对话双方都会出现独立入口，不影响主对话。删除时可选仅本机或双方删除；默认只删除记录，只有明确勾选才删除对应的本机下载文件。
+- 每台设备首次选定可信的笔记同步设备，双方授权后持续自动同步，之后不需要每次重新选择。离线编辑在重新连接后同步，并发修改保留冲突副本。
+- 笔记密码保护正文，标题仍可见；新设备首次输入同一个笔记密码，Android 可另外启用该设备的指纹/锁屏认证。同步的是加密内容，不是明文密码。
+- 高斯模糊属于低隐私防窥，双击揭示，进入后台或离开笔记页面后重新遮挡；需要真正保密时应启用密码加密。
 
 设置页还支持可选应用锁：应用从后台恢复时重新锁定，核心只保存 PIN 的 SHA-256 摘要。
 
@@ -13,7 +21,9 @@ Android / Windows 10+ / Linux，设备直连（E2E），默认加密，本地加
 
 ### Android
 
-![Android 首页](docs/screenshots/android-start.png)
+![Android 2.0 首页](docs/screenshots/android-start-2.0.png)
+
+![Android 2.0 手机尺寸笔记页](docs/screenshots/android-notes-2.0.png)
 
 ![Android 设置](docs/screenshots/android-settings.png)
 
@@ -23,11 +33,13 @@ Android / Windows 10+ / Linux，设备直连（E2E），默认加密，本地加
 
 ![Windows 首页](docs/screenshots/windows-start.png)
 
+![Windows 加密笔记](docs/screenshots/windows-notes-2.0.png)
+
 ## 发布
 
-发布页资产由 tools/publish_github_release.ps1 校验并上传。配置 GitHub CLI 后执行 gh auth login，再运行该脚本。
+发布页资产由 `tools/publish_github_release.ps1` 校验并上传，包含 APK、Windows 安装版、单 EXE 便携版、ZIP 和 SHA-256 校验清单。便携版双击启动，不需要手动安装或解压，也不打开可见 CMD 窗口。
 
-当前正式发布： [v1.4.1 Release](https://github.com/OPFIMISS/--Lunote/releases/tag/v1.4.1)，包含 `Lunote-1.4.1.apk`、Windows 可执行文件和 Windows x64 完整压缩包。
+2.0.0 正在完成发布验证，尚未上传。计划包含 APK、Windows 安装版、单文件便携版和 ZIP。已上传版本请查看 [Releases](https://github.com/OPFIMISS/--Lunote/releases)。
 
 - 项目根目录：`D:\Lunote 2\moonletter`
 - 技术栈：Rust（核心：tokio + rustls 1.3 + Ed25519 + AES-256-GCM）＋ Flutter（UI）
@@ -48,6 +60,7 @@ moonletter/
 │   │       ├── session.rs      TLS 1.3 会话（握手、心跳、读写任务、消息分发）
 │   │       ├── transfer.rs     文件/文件夹传输（分块、校验、断点续传）
 │   │       ├── store.rs        本地加密记录（SQLite + AES-256-GCM、导出/导入）
+│   │       ├── notes.rs        加密笔记、密码锁定、版本向量、冲突与备份
 │   │       ├── events.rs       事件定义（UI 的数据来源，字段别乱改）
 │   │       ├── runtime.rs      Runtime 聚合（启动、命令实现、设置持久化）
 │   │       ├── platform.rs     平台工具
@@ -88,7 +101,7 @@ moonletter/
 
 | 等级 | 文件 | 说明 |
 | --- | --- | --- |
-| 🔴 核心 | `crates/lunote-core/**` | 协议与状态机。改动必须跑 `cargo test`（16 单元 + 7 e2e） |
+| 🔴 核心 | `crates/lunote-core/**` | 协议与状态机。改动必须跑 `cargo test --workspace`（4 Bridge + 28 Core + 15 E2E） |
 | 🔴 核心 | `app/lib/src/core/**` | UI 与核心的桥。改动必须跑集成测试（否则 UI 全失灵且无报错） |
 | 🟡 边界 | `crates/lunote-bridge`、`app/lib/src/state/app_state.dart` | 改命令/事件/状态时两端字段必须一致（snake_case） |
 | 🟢 可大改 | `app/lib/src/ui/**`（pages/widgets/theme） | **UI 重做就改这里**，只要通过 AppState/CoreClient 拿数据、调用方法 |

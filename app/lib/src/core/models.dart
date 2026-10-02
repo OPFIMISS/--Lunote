@@ -55,6 +55,36 @@ class TrustRecord {
   );
 }
 
+class NoteItem {
+  NoteItem.fromJson(Map<String, dynamic> json) : data = Map.unmodifiable(json);
+  final Map<String, dynamic> data;
+  String get id => data['id'] as String;
+  String get title => data['title'] as String;
+  String get body => data['body'] as String? ?? '';
+  String get group => data['group'] as String;
+  int get order => (data['order'] as num).toInt();
+  bool get locked => data['locked'] != null;
+  bool get pinned => data['pinned'] == true;
+  bool get shielded => data['shielded'] == true;
+  bool get deleted => data['deleted'] == true;
+}
+
+class TemporaryThread {
+  TemporaryThread.fromJson(Map<String, dynamic> json)
+    : id = json['id'] as String,
+      peerDeviceId = json['peer_device_id'] as String,
+      conversationId = json['conversation_id'] as String,
+      title = json['title'] as String,
+      deleted = json['deleted'] == true,
+      hidden = json['hidden'] == true;
+  final String id;
+  final String peerDeviceId;
+  final String conversationId;
+  final String title;
+  final bool deleted;
+  final bool hidden;
+}
+
 class MessageItem {
   final String id;
   final String direction; // outgoing / incoming
@@ -62,6 +92,7 @@ class MessageItem {
   final String text;
   final String? url;
   final int tsMs;
+  final String? delivery;
 
   MessageItem({
     required this.id,
@@ -70,6 +101,7 @@ class MessageItem {
     required this.text,
     this.url,
     required this.tsMs,
+    this.delivery,
   });
 
   bool get isOutgoing => direction == 'outgoing';
@@ -81,12 +113,16 @@ class MessageItem {
     text: j['text'] as String? ?? '',
     url: j['url'] as String?,
     tsMs: (j['ts_ms'] as num?)?.toInt() ?? 0,
+    delivery: j['delivery'] as String?,
   );
 }
 
 class TransferItem {
   final String transferId;
   final String peerDeviceId;
+  final String? threadId;
+  String get conversationId =>
+      threadId == null ? peerDeviceId : 'thread:$peerDeviceId:$threadId';
   final String direction; // outgoing / incoming
   final String
   state; // offered/accepted/in_progress/done/failed/canceled/rejected
@@ -102,6 +138,7 @@ class TransferItem {
   TransferItem({
     required this.transferId,
     required this.peerDeviceId,
+    this.threadId,
     required this.direction,
     required this.state,
     required this.fileName,
@@ -144,6 +181,7 @@ class TransferItem {
   factory TransferItem.fromJson(Map<String, dynamic> j) => TransferItem(
     transferId: j['transfer_id'] as String? ?? '',
     peerDeviceId: j['peer_device_id'] as String? ?? '',
+    threadId: j['thread_id'] as String?,
     direction: j['direction'] as String? ?? 'incoming',
     state: j['state'] as String? ?? 'offered',
     fileName: j['file_name'] as String? ?? '',

@@ -75,7 +75,10 @@ pub enum CoreEvent {
         auto_trusted: bool,
     },
     /// 会话断开
-    PeerDisconnected { device_id: String, reason: String },
+    PeerDisconnected {
+        device_id: String,
+        reason: String,
+    },
     /// 收到消息
     MessageReceived {
         device_id: String,
@@ -103,8 +106,12 @@ pub enum CoreEvent {
     },
     /// 本地记录变化（UI 可借此刷新）
     RecordsChanged,
+    NotesChanged,
     /// 日志（级别 0=debug 1=info 2=warn 3=error）
-    Log { level: u8, msg: String },
+    Log {
+        level: u8,
+        msg: String,
+    },
 }
 
 /// 传输进度信息（事件与查询共用）
@@ -113,6 +120,8 @@ pub enum CoreEvent {
 pub struct TransferInfo {
     pub transfer_id: String,
     pub peer_device_id: String,
+    #[serde(default)]
+    pub thread_id: Option<String>,
     pub direction: Direction,
     pub state: TransferState,
     pub file_name: String,

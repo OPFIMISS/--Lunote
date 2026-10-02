@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import '../../core/models.dart';
@@ -80,6 +81,7 @@ class _MessageBubbleState extends State<MessageBubble>
       },
       child: GestureDetector(
         onLongPress: widget.onLongPress,
+        onSecondaryTap: widget.onLongPress,
         child: Stack(
           clipBehavior: Clip.none,
           children: [
@@ -140,6 +142,39 @@ class _MessageBubbleState extends State<MessageBubble>
                     else
                       SelectableText(
                         _displayText,
+                        contextMenuBuilder: (context, editable) =>
+                            AdaptiveTextSelectionToolbar.buttonItems(
+                              anchors: editable.contextMenuAnchors,
+                              buttonItems: [
+                                ContextMenuButtonItem(
+                                  label: '全选该消息',
+                                  onPressed: () => editable.selectAll(
+                                    SelectionChangedCause.toolbar,
+                                  ),
+                                ),
+                                ContextMenuButtonItem(
+                                  label: '复制全文',
+                                  onPressed: () {
+                                    Clipboard.setData(
+                                      ClipboardData(text: _displayText),
+                                    );
+                                    editable.hideToolbar();
+                                  },
+                                ),
+                                ContextMenuButtonItem(
+                                  label: '更多操作',
+                                  onPressed: () {
+                                    editable.hideToolbar();
+                                    widget.onLongPress?.call();
+                                  },
+                                ),
+                                ...editable.contextMenuButtonItems.where(
+                                  (item) =>
+                                      item.type !=
+                                      ContextMenuButtonType.selectAll,
+                                ),
+                              ],
+                            ),
                         style: TextStyle(
                           fontSize: 14.5,
                           height: 1.45,
@@ -150,7 +185,7 @@ class _MessageBubbleState extends State<MessageBubble>
                     Align(
                       alignment: Alignment.centerRight,
                       child: Text(
-                        formatClock(widget.message.tsMs),
+                        '${formatClock(widget.message.tsMs)}${outgoing && widget.message.delivery != null ? (widget.message.delivery == 'delivered' ? '  已送达' : '  待送达') : ''}',
                         style: TextStyle(
                           fontSize: 9.5,
                           color: outgoing

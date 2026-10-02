@@ -379,6 +379,391 @@ async fn file_transfer_integrity_and_folder() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn offline_queue_survives_sender_restart_and_delivers_once() {
+    let da = tempfile::tempdir().unwrap();
+    let db = tempfile::tempdir().unwrap();
+    let a = Runtime::start(cfg(da.path(), "queue-a", 45530))
+        .await
+        .unwrap();
+    let b = Runtime::start(cfg(db.path(), "queue-b", 45531))
+        .await
+        .unwrap();
+    wait_discovered(&a, &b, 12).await;
+    a.connect_to(&b.identity.device_id).await.unwrap();
+    trust_both(&a, &b);
+    let peer = b.identity.device_id.clone();
+    let sender = a.identity.device_id.clone();
+    b.stop();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let id = a.send_text(&peer, "queued-secret-api-key").await.unwrap();
+    assert_eq!(
+        a.conversations()
+            .unwrap()
+            .iter()
+            .find(|c| c.device_id == peer)
+            .unwrap()
+            .messages[0]
+            .delivery
+            .as_deref(),
+        Some("pending")
+    );
+    a.stop();
+    drop(a);
+    drop(b);
+    let a = Runtime::start(cfg(da.path(), "queue-a", 45530))
+        .await
+        .unwrap();
+    let b = Runtime::start(cfg(db.path(), "queue-b", 45531))
+        .await
+        .unwrap();
+    wait_discovered(&a, &b, 12).await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let delivered = a
+            .conversations()
+            .unwrap()
+            .iter()
+            .flat_map(|c| &c.messages)
+            .any(|m| m.id == id && m.delivery.as_deref() == Some("delivered"));
+        if delivered {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "queued message was not acknowledged"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let conversations = b.conversations().unwrap();
+    let received = conversations
+        .iter()
+        .find(|c| c.device_id == sender)
+        .unwrap();
+    assert_eq!(received.messages.iter().filter(|m| m.id == id).count(), 1);
+    assert_eq!(received.messages[0].text, "queued-secret-api-key");
+    a.stop();
+    b.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn temporary_thread_is_isolated_and_offline_deletion_syncs() {
+    let da = tempfile::tempdir().unwrap();
+    let db = tempfile::tempdir().unwrap();
+    let a = Runtime::start(cfg(da.path(), "thread-a", 45532))
+        .await
+        .unwrap();
+    let b = Runtime::start(cfg(db.path(), "thread-b", 45533))
+        .await
+        .unwrap();
+    wait_discovered(&a, &b, 12).await;
+    a.connect_to(&b.identity.device_id).await.unwrap();
+    trust_both(&a, &b);
+    let peer = b.identity.device_id.clone();
+    let thread = a.store.create_thread(&peer, "临时密钥对话").unwrap();
+    let id = a
+        .sessions
+        .send_thread_text(&peer, &thread.id, "temporary-secret")
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if b.conversations()
+            .unwrap()
+            .iter()
+            .flat_map(|c| &c.messages)
+            .any(|m| m.id == id)
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "temporary message not delivered"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let remote = b
+        .store
+        .threads(Some(&a.identity.device_id))
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(remote.id, thread.id);
+    assert_eq!(remote.title, "临时密钥对话");
+    assert!(
+        b.store
+            .list_messages(&a.identity.device_id)
+            .unwrap()
+            .is_empty(),
+        "temporary content leaked into main chat"
+    );
+    assert_eq!(
+        b.store
+            .list_messages(&remote.conversation_id)
+            .unwrap()
+            .len(),
+        1
+    );
+    b.stop();
+    drop(b);
+    a.store
+        .apply_thread(&peer, &thread.id, &thread.title, true, true)
+        .unwrap();
+    assert!(a
+        .store
+        .list_messages(&thread.conversation_id)
+        .unwrap()
+        .is_empty());
+    a.stop();
+    drop(a);
+    let a = Runtime::start(cfg(da.path(), "thread-a", 45532))
+        .await
+        .unwrap();
+    let b = Runtime::start(cfg(db.path(), "thread-b", 45533))
+        .await
+        .unwrap();
+    wait_discovered(&a, &b, 12).await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if b.store
+            .threads(None)
+            .unwrap()
+            .iter()
+            .any(|t| t.id == thread.id && t.deleted)
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "offline thread deletion not synchronized"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    assert!(b
+        .store
+        .list_messages(&remote.conversation_id)
+        .unwrap()
+        .is_empty());
+    assert!(a
+        .sessions
+        .send_thread_text(&peer, &thread.id, "resurrection")
+        .await
+        .is_err());
+    b.store
+        .apply_thread(
+            &a.identity.device_id,
+            &thread.id,
+            &thread.title,
+            false,
+            false,
+        )
+        .unwrap();
+    assert!(
+        b.store.threads(None).unwrap()[0].deleted,
+        "old announcement revived a deleted thread"
+    );
+    a.stop();
+    b.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn notes_sync_requires_selection_on_both_devices() {
+    use lunote_core::notes::{Clock, Note};
+    let da = tempfile::tempdir().unwrap();
+    let db = tempfile::tempdir().unwrap();
+    let a = Runtime::start(cfg(da.path(), "note-a", 45534))
+        .await
+        .unwrap();
+    let b = Runtime::start(cfg(db.path(), "note-b", 45535))
+        .await
+        .unwrap();
+    wait_discovered(&a, &b, 12).await;
+    a.connect_to(&b.identity.device_id).await.unwrap();
+    trust_both(&a, &b);
+    let saved = a
+        .sessions
+        .notes
+        .save(
+            Note {
+                id: String::new(),
+                title: "Shared note".into(),
+                body: Some("123-note-secret".into()),
+                locked: None,
+                clock: Clock::new(),
+                deleted: false,
+                pinned: false,
+                group: String::new(),
+                order: 0,
+                shielded: true,
+            },
+            None,
+            None,
+        )
+        .unwrap();
+    a.sessions
+        .notes
+        .select_peers([b.identity.device_id.clone()].into_iter().collect())
+        .unwrap();
+    a.sessions.wake_outbox();
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert!(
+        b.sessions.notes.list().is_empty(),
+        "notes leaked to an unselected peer"
+    );
+    b.sessions
+        .notes
+        .select_peers([a.identity.device_id.clone()].into_iter().collect())
+        .unwrap();
+    b.sessions.wake_outbox();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if b.sessions.notes.list().iter().any(|n| n.id == saved.id) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "selected peers did not synchronize"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    assert_eq!(
+        b.sessions.notes.list()[0].body.as_deref(),
+        Some("123-note-secret")
+    );
+    let mut edited = b.sessions.notes.list()[0].clone();
+    edited.body = Some("456-reply".into());
+    b.sessions.notes.save(edited, None, None).unwrap();
+    b.sessions.wake_outbox();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if a.sessions
+            .notes
+            .list()
+            .iter()
+            .any(|n| n.body.as_deref() == Some("456-reply"))
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "reverse edit did not synchronize"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    a.stop();
+    b.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn temporary_file_transfer_stays_isolated_after_restart() {
+    let da = tempfile::tempdir().unwrap();
+    let db = tempfile::tempdir().unwrap();
+    let a = Runtime::start(cfg(da.path(), "thread-file-a", 45536))
+        .await
+        .unwrap();
+    let b = Runtime::start(cfg(db.path(), "thread-file-b", 45537))
+        .await
+        .unwrap();
+    wait_discovered(&a, &b, 12).await;
+    a.connect_to(&b.identity.device_id).await.unwrap();
+    trust_both(&a, &b);
+    let thread = a
+        .store
+        .create_thread(&b.identity.device_id, "附件临时会话")
+        .unwrap();
+    let source = da.path().join("secret.json");
+    let bytes = rand_bytes(1024 * 1024);
+    std::fs::write(&source, &bytes).unwrap();
+    let mut events = b.events();
+    let id = a
+        .send_paths_in_thread(&b.identity.device_id, vec![source], Some(&thread.id))
+        .await
+        .unwrap()
+        .remove(0);
+    let offer = wait_for(
+        &mut events,
+        |e| match e {
+            CoreEvent::TransferUpdate(t)
+                if t.transfer_id == id && t.state == TransferState::Offered =>
+            {
+                Some(t.clone())
+            }
+            _ => None,
+        },
+        10,
+    )
+    .await
+    .expect("temporary file offer missing");
+    assert_eq!(offer.thread_id.as_deref(), Some(thread.id.as_str()));
+    assert_eq!(offer.peer_device_id, a.identity.device_id);
+    let destination = db.path().join("received");
+    b.accept_transfer(&id, &destination).await.unwrap();
+    let done = wait_for(
+        &mut events,
+        |e| match e {
+            CoreEvent::TransferUpdate(t)
+                if t.transfer_id == id && t.state == TransferState::Done =>
+            {
+                Some(t.clone())
+            }
+            _ => None,
+        },
+        15,
+    )
+    .await
+    .expect("temporary file did not finish");
+    let received = std::path::PathBuf::from(done.local_path.as_ref().unwrap());
+    assert_eq!(std::fs::read(&received).unwrap(), bytes);
+    assert!(
+        b.store
+            .list_transfers(&a.identity.device_id)
+            .unwrap()
+            .is_empty(),
+        "temporary file appeared in main chat"
+    );
+    let remote = b
+        .store
+        .threads(Some(&a.identity.device_id))
+        .unwrap()
+        .pop()
+        .unwrap();
+    let history = b.store.list_transfers(&remote.conversation_id).unwrap();
+    assert_eq!(history[0].thread_id.as_deref(), Some(thread.id.as_str()));
+    assert_eq!(history[0].peer_device_id, a.identity.device_id);
+    b.stop();
+    drop(b);
+    let b = Runtime::start(cfg(db.path(), "thread-file-b", 45537))
+        .await
+        .unwrap();
+    assert_eq!(
+        b.store.list_transfers(&remote.conversation_id).unwrap()[0]
+            .thread_id
+            .as_deref(),
+        Some(thread.id.as_str())
+    );
+    b.store.hide_thread(&thread.id).unwrap();
+    assert!(b
+        .store
+        .list_transfers(&remote.conversation_id)
+        .unwrap()
+        .is_empty());
+    b.store.append_transfer(&done).unwrap();
+    assert!(
+        b.store
+            .list_transfers(&remote.conversation_id)
+            .unwrap()
+            .is_empty(),
+        "late progress resurrected a deleted local thread"
+    );
+    assert!(
+        received.exists(),
+        "record deletion removed the actual file without consent"
+    );
+    a.stop();
+    b.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn untrusted_sender_file_auto_rejected() {
     let da = tempfile::tempdir().unwrap();
     let db = tempfile::tempdir().unwrap();
@@ -485,21 +870,40 @@ async fn cancel_transfer() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn resume_after_disconnect() {
+    check_resume_after_disconnect(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn temporary_file_resume_after_disconnect() {
+    check_resume_after_disconnect(true).await;
+}
+
+async fn check_resume_after_disconnect(temporary: bool) {
     init_tracing();
     let da = tempfile::tempdir().unwrap();
     let db = tempfile::tempdir().unwrap();
-    let a = Runtime::start(cfg(da.path(), "甲", 45466)).await.unwrap();
-    let b = Runtime::start(cfg(db.path(), "乙", 45467)).await.unwrap();
+    let port = if temporary { 45538 } else { 45466 };
+    let a = Runtime::start(cfg(da.path(), "甲", port)).await.unwrap();
+    let b = Runtime::start(cfg(db.path(), "乙", port + 1))
+        .await
+        .unwrap();
     wait_discovered(&a, &b, 12).await;
     a.connect_to(&b.identity.device_id).await.unwrap();
     trust_both(&a, &b);
+
+    let thread = temporary.then(|| {
+        a.store
+            .create_thread(&b.identity.device_id, "续传临时对话")
+            .unwrap()
+    });
+    let thread_id = thread.as_ref().map(|t| t.id.as_str());
 
     let src = da.path().join("续传大文件.bin");
     let data = rand_bytes(64 * 1024 * 1024);
     std::fs::write(&src, &data).unwrap();
     let dest = db.path().join("接收");
     let ids = a
-        .send_paths(&b.identity.device_id, vec![src.clone()])
+        .send_paths_in_thread(&b.identity.device_id, vec![src.clone()], thread_id)
         .await
         .unwrap();
     let tid = ids[0].clone();
@@ -556,13 +960,13 @@ async fn resume_after_disconnect() {
     assert!(partial_size > 0, "断线前应有已收数据");
 
     // 发送端重启（同一数据目录 → 同一 device_id）
-    let a2 = Runtime::start(cfg(da.path(), "甲", 45466)).await.unwrap();
+    let a2 = Runtime::start(cfg(da.path(), "甲", port)).await.unwrap();
     wait_discovered(&a2, &b, 12).await;
     a2.connect_to(&b.identity.device_id).await.unwrap();
 
     // 重发同一文件 → B 应带 offset 续传
     let ids2 = a2
-        .send_paths(&b.identity.device_id, vec![src.clone()])
+        .send_paths_in_thread(&b.identity.device_id, vec![src.clone()], thread_id)
         .await
         .unwrap();
     let tid2 = ids2[0].clone();
@@ -621,6 +1025,26 @@ async fn resume_after_disconnect() {
     let got = dest.join("续传大文件.bin");
     assert!(got.exists(), "接收文件不存在");
     assert_eq!(sha256_file(&src), sha256_file(&got), "续传后文件哈希不一致");
+    let conversation = if let Some(thread) = &thread {
+        b.store
+            .threads(Some(&a2.identity.device_id))
+            .unwrap()
+            .into_iter()
+            .find(|t| t.id == thread.id)
+            .unwrap()
+            .conversation_id
+    } else {
+        a2.identity.device_id.clone()
+    };
+    let history = b.store.list_transfers(&conversation).unwrap();
+    assert!(history.iter().any(|t| t.transfer_id == tid2));
+    assert!(
+        history
+            .iter()
+            .filter(|t| t.transfer_id == tid || t.transfer_id == tid2)
+            .all(|t| t.thread_id.as_deref() == thread_id),
+        "续传丢失会话归属"
+    );
     // 无 .part 残留
     let leftovers: Vec<_> = std::fs::read_dir(&dest)
         .unwrap()
@@ -686,23 +1110,137 @@ async fn export_import_across_instances() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pause_and_resume_transfer() {
-    init_tracing();
+    check_pause_and_resume_transfer(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn temporary_file_pause_and_resume() {
+    check_pause_and_resume_transfer(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn deleting_temporary_thread_cancels_active_files_on_both_devices() {
     let da = tempfile::tempdir().unwrap();
     let db = tempfile::tempdir().unwrap();
-    let a = Runtime::start(cfg(da.path(), "暂停甲", 45471))
+    let a = Runtime::start(cfg(da.path(), "delete-file-a", 45542))
         .await
         .unwrap();
-    let b = Runtime::start(cfg(db.path(), "暂停乙", 45472))
+    let b = Runtime::start(cfg(db.path(), "delete-file-b", 45543))
         .await
         .unwrap();
     wait_discovered(&a, &b, 12).await;
     a.connect_to(&b.identity.device_id).await.unwrap();
     trust_both(&a, &b);
+    let thread = a
+        .store
+        .create_thread(&b.identity.device_id, "删除中的附件")
+        .unwrap();
+    let src = da.path().join("delete.bin");
+    std::fs::write(&src, rand_bytes(64 * 1024 * 1024)).unwrap();
+    let mut rx = b.events();
+    let tid = a
+        .send_paths_in_thread(&b.identity.device_id, vec![src], Some(&thread.id))
+        .await
+        .unwrap()[0]
+        .clone();
+    wait_for(
+        &mut rx,
+        |e| match e {
+            CoreEvent::TransferUpdate(t)
+                if t.transfer_id == tid && t.state == TransferState::Offered =>
+            {
+                Some(())
+            }
+            _ => None,
+        },
+        15,
+    )
+    .await
+    .expect("missing offer");
+    a.pause_transfer(&tid).await.unwrap();
+    b.accept_transfer(&tid, &db.path().join("received"))
+        .await
+        .unwrap();
+    a.transfers
+        .cancel_thread(&b.identity.device_id, &thread.id)
+        .await
+        .unwrap();
+    a.store
+        .apply_thread(&b.identity.device_id, &thread.id, &thread.title, true, true)
+        .unwrap();
+    a.sessions.wake_outbox();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        if b.store
+            .threads(None)
+            .unwrap()
+            .iter()
+            .any(|t| t.id == thread.id && t.deleted)
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "remote thread deletion did not arrive"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!a
+        .transfers
+        .list()
+        .iter()
+        .any(|t| t.thread_id.as_deref() == Some(&thread.id)));
+    assert!(!b
+        .transfers
+        .list()
+        .iter()
+        .any(|t| t.thread_id.as_deref() == Some(&thread.id)));
+    let remote = b
+        .store
+        .threads(None)
+        .unwrap()
+        .into_iter()
+        .find(|t| t.id == thread.id)
+        .unwrap();
+    assert!(b
+        .store
+        .list_transfers(&remote.conversation_id)
+        .unwrap()
+        .is_empty());
+    assert!(
+        a.resume_transfer(&tid).await.is_err(),
+        "deleted task should not resume"
+    );
+    a.stop();
+    b.stop();
+}
+
+async fn check_pause_and_resume_transfer(temporary: bool) {
+    init_tracing();
+    let da = tempfile::tempdir().unwrap();
+    let db = tempfile::tempdir().unwrap();
+    let port = if temporary { 45540 } else { 45471 };
+    let a = Runtime::start(cfg(da.path(), "暂停甲", port))
+        .await
+        .unwrap();
+    let b = Runtime::start(cfg(db.path(), "暂停乙", port + 1))
+        .await
+        .unwrap();
+    wait_discovered(&a, &b, 12).await;
+    a.connect_to(&b.identity.device_id).await.unwrap();
+    trust_both(&a, &b);
+    let thread = temporary.then(|| {
+        a.store
+            .create_thread(&b.identity.device_id, "暂停临时对话")
+            .unwrap()
+    });
+    let thread_id = thread.as_ref().map(|t| t.id.as_str());
     let src = da.path().join("pause.bin");
     std::fs::write(&src, rand_bytes(32 * 1024 * 1024)).unwrap();
     let dest = db.path().join("接收");
     let tid = a
-        .send_paths(&b.identity.device_id, vec![src])
+        .send_paths_in_thread(&b.identity.device_id, vec![src.clone()], thread_id)
         .await
         .unwrap()[0]
         .clone();
@@ -767,9 +1305,27 @@ async fn pause_and_resume_transfer() {
     )
     .await
     .expect("继续后传输未完成");
+    assert_eq!(sha256_file(&src), sha256_file(&dest.join("pause.bin")));
+    let conversation = if let Some(thread) = &thread {
+        b.store
+            .threads(Some(&a.identity.device_id))
+            .unwrap()
+            .into_iter()
+            .find(|t| t.id == thread.id)
+            .unwrap()
+            .conversation_id
+    } else {
+        a.identity.device_id.clone()
+    };
+    let history = b.store.list_transfers(&conversation).unwrap();
     assert_eq!(
-        std::fs::read(dest.join("pause.bin")).unwrap().len(),
-        32 * 1024 * 1024
+        history
+            .iter()
+            .find(|t| t.transfer_id == tid)
+            .unwrap()
+            .thread_id
+            .as_deref(),
+        thread_id
     );
     a.stop();
     b.stop();

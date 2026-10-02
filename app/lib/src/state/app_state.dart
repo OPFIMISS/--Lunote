@@ -46,6 +46,9 @@ class AppState extends ChangeNotifier {
 
   /// deviceId -> 消息列表（对话）
   final Map<String, List<MessageItem>> messages = {};
+  final Map<String, TemporaryThread> temporaryThreads = {};
+  final List<NoteItem> notes = [];
+  final Set<String> noteSyncPeers = {};
 
   /// deviceId -> 传输列表（对话内）
   final Map<String, List<TransferItem>> conversationTransfers = {};
@@ -84,6 +87,7 @@ class AppState extends ChangeNotifier {
       tcpPort: tcpPort,
       bridgeOverride: bridgeOverride,
     );
+    _sub = core.events.listen(_onEvent);
     final id = await core.call('identity');
     deviceId = id['device_id'] as String? ?? '';
     deviceName = id['name'] as String? ?? name;
@@ -110,7 +114,7 @@ class AppState extends ChangeNotifier {
     imagePreviewEnabled = stMap?['image_preview'] as bool? ?? true;
     await refreshTrusted();
     await refreshConversations();
-    _sub = core.events.listen(_onEvent);
+    await refreshNotes();
     coreReady = true;
     // 核心启动后立即发现设备，可能在本端订阅事件前就发出了 peer_online
     // （广播流不缓存，错过即丢）。订阅后主动拉一次快照补上，再定时轮询兜底。
@@ -128,6 +132,22 @@ class AppState extends ChangeNotifier {
       final rec = TrustRecord.fromJson(e as Map<String, dynamic>);
       trusted[rec.deviceId] = rec;
     }
+  }
+
+  Future<void> refreshNotes() async {
+    final result = await core.call('notes');
+    if (result['ok'] != true) return;
+    notes
+      ..clear()
+      ..addAll(
+        ((result['notes'] as List?) ?? []).map(
+          (e) => NoteItem.fromJson((e as Map).cast<String, dynamic>()),
+        ),
+      );
+    noteSyncPeers
+      ..clear()
+      ..addAll(((result['sync_peers'] as List?) ?? []).cast<String>());
+    notifyListeners();
   }
 
   /// 从核心拉取当前发现快照（含离线未过期设备），补上启动时错过的事件。
@@ -170,6 +190,14 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> refreshConversations() async {
+    final threadResult = await core.call('threads');
+    final nextThreads = <String, TemporaryThread>{};
+    for (final item in (threadResult['threads'] as List?) ?? []) {
+      final thread = TemporaryThread.fromJson(
+        (item as Map).cast<String, dynamic>(),
+      );
+      nextThreads[thread.conversationId] = thread;
+    }
     final r = await core.call('conversations');
     final nextMessages = <String, List<MessageItem>>{};
     final nextConversationTransfers = <String, List<TransferItem>>{};
@@ -194,7 +222,7 @@ class AppState extends ChangeNotifier {
       final transfer = TransferItem.fromJson(e as Map<String, dynamic>);
       transfersById[transfer.transferId] = transfer;
       final list = nextConversationTransfers.putIfAbsent(
-        transfer.peerDeviceId,
+        transfer.conversationId,
         () => <TransferItem>[],
       );
       final index = list.indexWhere(
@@ -207,6 +235,9 @@ class AppState extends ChangeNotifier {
       }
     }
 
+    temporaryThreads
+      ..clear()
+      ..addAll(nextThreads);
     messages
       ..clear()
       ..addAll(nextMessages);
@@ -220,9 +251,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  PeerInfo? peer(String deviceId) => peers[deviceId];
+  PeerInfo? peer(String deviceId) =>
+      peers[temporaryThreads[deviceId]?.peerDeviceId ?? deviceId];
 
   String peerName(String deviceId) {
+    final thread = temporaryThreads[deviceId];
+    if (thread != null) return '${thread.title} · 临时';
     final alias = deviceAliases[deviceId];
     if (alias != null && alias.isNotEmpty) return alias;
     final p = peers[deviceId];
@@ -232,7 +266,9 @@ class AppState extends ChangeNotifier {
     return '未知设备';
   }
 
-  bool isTrusted(String deviceId) => trusted[deviceId]?.trusted ?? false;
+  bool isTrusted(String deviceId) =>
+      trusted[temporaryThreads[deviceId]?.peerDeviceId ?? deviceId]?.trusted ??
+      false;
 
   List<MessageItem> messagesOf(String deviceId) =>
       messages[deviceId] ?? const [];
@@ -249,7 +285,17 @@ class AppState extends ChangeNotifier {
           .map((e) => e.key),
       ...trusted.keys,
       ...peers.keys,
+      ...temporaryThreads.values
+          .where((t) => !t.deleted && !t.hidden)
+          .map((t) => t.conversationId),
     };
+    ids.removeWhere(
+      (id) =>
+          id.startsWith('thread:') &&
+          (temporaryThreads[id] == null ||
+              temporaryThreads[id]!.deleted ||
+              temporaryThreads[id]!.hidden),
+    );
     ids.removeAll(_hiddenConversationIds);
     final list = ids.toList();
     list.sort((a, b) {
@@ -358,13 +404,14 @@ class AppState extends ChangeNotifier {
             text: e['text'] as String? ?? '',
             url: e['url'] as String?,
             tsMs: (e['ts_ms'] as num?)?.toInt() ?? 0,
+            delivery: e['event'] == 'message_sent' ? 'pending' : null,
           ),
         );
         messages[id] = list;
         _hiddenConversationIds.remove(id);
       case 'transfer_update':
         final t = TransferItem.fromJson(e);
-        _hiddenConversationIds.remove(t.peerDeviceId);
+        _hiddenConversationIds.remove(t.conversationId);
         _upsertTransfer(t);
         if (t.isOffered && !t.isOutgoing && autoReceive) {
           unawaited(_autoAcceptTransfer(t));
@@ -382,6 +429,8 @@ class AppState extends ChangeNotifier {
         unawaited(refreshTrusted());
       case 'records_changed':
         unawaited(refreshConversations());
+      case 'notes_changed':
+        unawaited(refreshNotes());
     }
     notifyListeners();
   }
@@ -409,14 +458,14 @@ class AppState extends ChangeNotifier {
   }
 
   void _upsertTransfer(TransferItem t) {
-    final list = conversationTransfers[t.peerDeviceId] ?? [];
+    final list = conversationTransfers[t.conversationId] ?? [];
     final idx = list.indexWhere((x) => x.transferId == t.transferId);
     if (idx >= 0) {
       list[idx] = t;
     } else {
       list.add(t);
     }
-    conversationTransfers[t.peerDeviceId] = list;
+    conversationTransfers[t.conversationId] = list;
     final allIdx = allTransfers.indexWhere((x) => x.transferId == t.transferId);
     if (allIdx >= 0) {
       allTransfers[allIdx] = t;
@@ -429,23 +478,31 @@ class AppState extends ChangeNotifier {
 
   Future<String?> sendText(String deviceId, String text) async {
     _hiddenConversationIds.remove(deviceId);
-    final r = await core.call('send_text', {
-      'device_id': deviceId,
-      'text': text,
-    });
+    final thread = temporaryThreads[deviceId];
+    final r = await core.call(
+      thread == null ? 'send_text' : 'send_thread_text',
+      {
+        'device_id': thread?.peerDeviceId ?? deviceId,
+        if (thread != null) 'thread_id': thread.id,
+        'text': text,
+      },
+    );
     return r['ok'] == true ? null : (r['error'] as String? ?? '发送失败');
   }
 
   Future<String?> sendLink(String deviceId, String url) async {
+    if (temporaryThreads.containsKey(deviceId)) return sendText(deviceId, url);
     _hiddenConversationIds.remove(deviceId);
     final r = await core.call('send_link', {'device_id': deviceId, 'url': url});
     return r['ok'] == true ? null : (r['error'] as String? ?? '发送失败');
   }
 
   Future<String?> sendFile(String deviceId, String path) async {
+    final thread = temporaryThreads[deviceId];
     _hiddenConversationIds.remove(deviceId);
     final r = await core.call('send_file', {
-      'device_id': deviceId,
+      'device_id': thread?.peerDeviceId ?? deviceId,
+      if (thread != null) 'thread_id': thread.id,
       'path': path,
     });
     if (r['ok'] == true) {
@@ -568,7 +625,18 @@ class AppState extends ChangeNotifier {
   Future<String?> deleteConversations(Iterable<String> deviceIds) async {
     final ids = deviceIds.toSet().toList();
     if (ids.isEmpty) return null;
-    final r = await core.call('delete_conversations', {'device_ids': ids});
+    for (final id in ids.where(temporaryThreads.containsKey)) {
+      final result = await core.call('delete_thread', {
+        'thread_id': temporaryThreads[id]!.id,
+        'both': false,
+      });
+      if (result['ok'] != true) return result['error'] as String? ?? '删除失败';
+    }
+    final r = await core.call('delete_conversations', {
+      'device_ids': ids
+          .where((id) => !temporaryThreads.containsKey(id))
+          .toList(),
+    });
     if (r['ok'] != true) {
       return r['error'] as String? ?? '删除失败';
     }
@@ -577,7 +645,7 @@ class AppState extends ChangeNotifier {
       conversationTransfers.remove(id);
       _hiddenConversationIds.add(id);
     }
-    allTransfers.removeWhere((t) => ids.contains(t.peerDeviceId));
+    allTransfers.removeWhere((t) => ids.contains(t.conversationId));
     notifyListeners();
     return null;
   }
@@ -762,12 +830,12 @@ class AppState extends ChangeNotifier {
       return;
     }
     try {
-      final exported = await const MethodChannel(
-        'com.lunote.lunote_app/platform',
-      ).invokeMethod<bool>(
-        'exportToTree',
-        {'path': t.localPath, 'treeUri': receiveTreeUri},
-      );
+      final exported =
+          await const MethodChannel('com.lunote.lunote_app/platform')
+              .invokeMethod<bool>('exportToTree', {
+                'path': t.localPath,
+                'treeUri': receiveTreeUri,
+              });
       if (exported != true) {
         _exportingTransfers.remove(t.transferId);
         await _notifyExportFailure(t, '系统拒绝写入所选目录，请重新选择接收目录');
@@ -784,14 +852,12 @@ class AppState extends ChangeNotifier {
   Future<void> _notifyExportFailure(TransferItem t, String reason) async {
     if (!Platform.isAndroid) return;
     try {
-      await const MethodChannel('com.lunote.lunote_app/platform').invokeMethod(
-        'notifyTransfer',
-        {
-          'title': '文件已接收，但保存到公共目录失败',
-          'body': '${t.fileName}：$reason',
-          'transfer_id': t.transferId,
-        },
-      );
+      await const MethodChannel('com.lunote.lunote_app/platform')
+          .invokeMethod('notifyTransfer', {
+            'title': '文件已接收，但保存到公共目录失败',
+            'body': '${t.fileName}：$reason',
+            'transfer_id': t.transferId,
+          });
     } catch (_) {}
   }
 

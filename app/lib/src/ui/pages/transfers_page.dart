@@ -488,7 +488,7 @@ class _TransfersPageState extends State<TransfersPage> {
                                         return;
                                       }
                                       final err = await state.sendFile(
-                                        t.peerDeviceId,
+                                        t.conversationId,
                                         path,
                                       );
                                       if (err != null && context.mounted) {

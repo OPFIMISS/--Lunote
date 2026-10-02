@@ -34,8 +34,11 @@ static INSTANCES: LazyLock<Mutex<HashMap<i64, Instance>>> =
 
 /// 创建核心实例；config_json: { "data_dir", "name", "discovery_port", "tcp_port" }
 /// 返回句柄（<0 表示失败，-1 错误见 stderr）
+///
+/// # Safety
+/// A non-null config_json must point to a valid NUL-terminated string for this call.
 #[no_mangle]
-pub extern "C" fn lunote_create(config_json: *const c_char) -> i64 {
+pub unsafe extern "C" fn lunote_create(config_json: *const c_char) -> i64 {
     let Some(cfg_str) = cstr(config_json) else {
         return -1;
     };
@@ -124,8 +127,11 @@ pub extern "C" fn lunote_destroy(handle: i64) {
 }
 
 /// 执行命令（阻塞）。返回 JSON 字符串（调用方用 lunote_free_string 释放）。
+///
+/// # Safety
+/// A non-null cmd_json must point to a valid NUL-terminated string for this call.
 #[no_mangle]
-pub extern "C" fn lunote_call(handle: i64, cmd_json: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn lunote_call(handle: i64, cmd_json: *const c_char) -> *mut c_char {
     let Some(cmd) = cstr(cmd_json) else {
         return to_cstr(r#"{"ok":false,"error":"参数为空"}"#);
     };
@@ -157,8 +163,12 @@ pub extern "C" fn lunote_poll(handle: i64) -> *mut c_char {
     to_cstr(&format!("[{}]", out.join(",")))
 }
 
+/// Release an owned string returned by lunote_call or lunote_poll.
+///
+/// # Safety
+/// ptr must be null or an unreleased string allocated by this library. Free it once.
 #[no_mangle]
-pub extern "C" fn lunote_free_string(ptr: *mut c_char) {
+pub unsafe extern "C" fn lunote_free_string(ptr: *mut c_char) {
     if !ptr.is_null() {
         unsafe {
             drop(CString::from_raw(ptr));
@@ -174,6 +184,152 @@ fn dispatch(runtime: &Runtime, rt: &tokio::runtime::Runtime, cmd_json: &str) -> 
     let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
     let ok = |extra: &str| Ok::<String, anyhow::Error>(format!("{{\"ok\":true{}}}", extra));
     match cmd {
+        "notes" => ok(&format!(
+            ",\"notes\":{},\"sync_peers\":{}",
+            serde_json::to_string(&runtime.sessions.notes.list())?,
+            serde_json::to_string(&runtime.sessions.notes.peers())?
+        )),
+        "set_note_peers" => {
+            let peers: std::collections::BTreeSet<String> = serde_json::from_value(
+                v.get("device_ids")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([])),
+            )?;
+            if peers.iter().any(|peer| !runtime.is_trusted(peer)) {
+                return Err(anyhow!("笔记仅能同步至已信任设备"));
+            }
+            runtime.sessions.notes.select_peers(peers)?;
+            runtime
+                .bus
+                .emit(lunote_core::events::CoreEvent::NotesChanged);
+            runtime.sessions.wake_outbox();
+            ok("")
+        }
+        "save_note" => {
+            let note =
+                serde_json::from_value(v.get("note").cloned().ok_or_else(|| anyhow!("缺少笔记"))?)?;
+            let saved = runtime.sessions.notes.save(
+                note,
+                v.get("password").and_then(|v| v.as_str()),
+                v.get("new_password").and_then(|v| v.as_str()),
+            )?;
+            runtime
+                .bus
+                .emit(lunote_core::events::CoreEvent::NotesChanged);
+            runtime.sessions.wake_outbox();
+            ok(&format!(",\"note\":{}", serde_json::to_string(&saved)?))
+        }
+        "unlock_note" => {
+            let body = runtime
+                .sessions
+                .notes
+                .unlock(&s("note_id"), &s("password"))?;
+            ok(&format!(",\"body\":{}", serde_json::to_string(&body)?))
+        }
+        "reorder_notes" => {
+            runtime.sessions.notes.reorder(serde_json::from_value(
+                v.get("versions")
+                    .cloned()
+                    .ok_or_else(|| anyhow!("缺少排序列表"))?,
+            )?)?;
+            runtime
+                .bus
+                .emit(lunote_core::events::CoreEvent::NotesChanged);
+            runtime.sessions.wake_outbox();
+            ok("")
+        }
+        "export_notes" => {
+            runtime
+                .sessions
+                .notes
+                .export(&s("password"), &PathBuf::from(s("path")))?;
+            ok("")
+        }
+        "import_notes" => {
+            runtime
+                .sessions
+                .notes
+                .import(&s("password"), &PathBuf::from(s("path")))?;
+            runtime
+                .bus
+                .emit(lunote_core::events::CoreEvent::NotesChanged);
+            runtime.sessions.wake_outbox();
+            ok("")
+        }
+        "threads" => ok(&format!(
+            ",\"threads\":{}",
+            serde_json::to_string(&runtime.store.threads(None)?)?
+        )),
+        "create_thread" => {
+            let peer = s("device_id");
+            if !runtime.is_trusted(&peer) {
+                return Err(anyhow!("请先信任该设备"));
+            }
+            let thread = runtime.store.create_thread(&peer, &s("title"))?;
+            runtime.sessions.wake_outbox();
+            runtime
+                .bus
+                .emit(lunote_core::events::CoreEvent::RecordsChanged);
+            ok(&format!(",\"thread\":{}", serde_json::to_string(&thread)?))
+        }
+        "delete_thread" => {
+            let id = s("thread_id");
+            let thread = runtime
+                .store
+                .threads(None)?
+                .into_iter()
+                .find(|t| t.id == id)
+                .ok_or_else(|| anyhow!("临时对话不存在"))?;
+            rt.block_on(runtime.transfers.cancel_thread(&thread.peer_device_id, &id))?;
+            if v.get("delete_local_files")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                for transfer in runtime
+                    .store
+                    .list_transfers(&thread.conversation_id)?
+                    .into_iter()
+                    .filter(|t| {
+                        t.direction == lunote_core::events::Direction::Incoming
+                            && t.state == lunote_core::events::TransferState::Done
+                    })
+                {
+                    if let Some(path) = transfer.local_path {
+                        match std::fs::remove_file(&path) {
+                            Ok(()) => {}
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                            Err(error) => {
+                                return Err(error).context("删除已下载文件失败，记录暂时保留")
+                            }
+                        }
+                    }
+                }
+            }
+            if v.get("both").and_then(|v| v.as_bool()).unwrap_or(false) {
+                runtime.store.apply_thread(
+                    &thread.peer_device_id,
+                    &id,
+                    &thread.title,
+                    true,
+                    true,
+                )?;
+            } else {
+                runtime.store.hide_thread(&id)?;
+            }
+            runtime.sessions.wake_outbox();
+            runtime
+                .bus
+                .emit(lunote_core::events::CoreEvent::RecordsChanged);
+            ok("")
+        }
+        "send_thread_text" => {
+            let id = rt.block_on(runtime.sessions.send_thread_text(
+                &s("device_id"),
+                &s("thread_id"),
+                &s("text"),
+            ))?;
+            ok(&format!(",\"message_id\":\"{}\"", id))
+        }
         "send_text" => {
             let id = rt.block_on(runtime.send_text(&s("device_id"), &s("text")))?;
             ok(&format!(",\"message_id\":\"{}\"", id))
@@ -183,8 +339,11 @@ fn dispatch(runtime: &Runtime, rt: &tokio::runtime::Runtime, cmd_json: &str) -> 
             ok(&format!(",\"message_id\":\"{}\"", id))
         }
         "send_file" => {
-            let ids =
-                rt.block_on(runtime.send_paths(&s("device_id"), vec![PathBuf::from(s("path"))]))?;
+            let ids = rt.block_on(runtime.send_paths_in_thread(
+                &s("device_id"),
+                vec![PathBuf::from(s("path"))],
+                v.get("thread_id").and_then(|v| v.as_str()),
+            ))?;
             ok(&format!(
                 ",\"transfer_ids\":{}",
                 serde_json::to_string(&ids)?
@@ -443,19 +602,19 @@ fn to_cstr(s: &str) -> *mut c_char {
 /// 测试入口（cargo test 直接调用命令层）
 pub fn call_command(config: &str, commands: &[&str]) -> Vec<String> {
     let config = CString::new(config).unwrap();
-    let handle = lunote_create(config.as_ptr());
+    let handle = unsafe { lunote_create(config.as_ptr()) };
     assert!(handle > 0, "核心启动失败");
     let mut out = Vec::new();
     for cmd in commands {
         let cmd = CString::new(*cmd).unwrap();
-        let ptr = lunote_call(handle, cmd.as_ptr());
+        let ptr = unsafe { lunote_call(handle, cmd.as_ptr()) };
         let result = if ptr.is_null() {
             "null".to_string()
         } else {
             unsafe { CStr::from_ptr(ptr).to_string_lossy().to_string() }
         };
         if !ptr.is_null() {
-            lunote_free_string(ptr);
+            unsafe { lunote_free_string(ptr) };
         }
         out.push(result);
     }
@@ -477,15 +636,15 @@ mod tests {
 
     fn create(config: &str) -> i64 {
         let config = CString::new(config).unwrap();
-        lunote_create(config.as_ptr())
+        unsafe { lunote_create(config.as_ptr()) }
     }
 
     fn call(handle: i64, command: &str) -> serde_json::Value {
         let command = CString::new(command).unwrap();
-        let ptr = lunote_call(handle, command.as_ptr());
+        let ptr = unsafe { lunote_call(handle, command.as_ptr()) };
         assert!(!ptr.is_null());
         let raw = unsafe { CStr::from_ptr(ptr).to_string_lossy().to_string() };
-        lunote_free_string(ptr);
+        unsafe { lunote_free_string(ptr) };
         serde_json::from_str(&raw).unwrap()
     }
 

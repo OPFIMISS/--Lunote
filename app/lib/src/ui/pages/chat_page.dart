@@ -57,6 +57,204 @@ class _ChatPageState extends State<ChatPage> {
     });
   }
 
+  Future<void> _showMessageActions(MessageItem message) async {
+    if (_messageSelectionMode) {
+      _toggleMessageSelection(message.id);
+      return;
+    }
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final item in [
+              ('select', Icons.select_all_rounded, '全选该消息'),
+              ('copy', Icons.copy_rounded, '复制全文'),
+              ('batch', Icons.checklist_rounded, '批量选择'),
+              ('delete', Icons.delete_outline_rounded, '删除'),
+            ])
+              ListTile(
+                leading: Icon(item.$2),
+                title: Text(item.$3),
+                onTap: () => Navigator.pop(context, item.$1),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case 'copy':
+        await Clipboard.setData(ClipboardData(text: message.text));
+      case 'select':
+        final controller = TextEditingController(text: message.text)
+          ..selection = TextSelection(
+            baseOffset: 0,
+            extentOffset: message.text.length,
+          );
+        await showDialog<void>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('消息全文'),
+            content: SizedBox(
+              width: 520,
+              child: TextField(
+                controller: controller,
+                readOnly: true,
+                autofocus: true,
+                maxLines: null,
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: message.text));
+                  Navigator.pop(context);
+                },
+                child: const Text('复制全文'),
+              ),
+            ],
+          ),
+        );
+        controller.dispose();
+      case 'batch':
+        _toggleMessageSelection(message.id);
+      case 'delete':
+        _toggleMessageSelection(message.id);
+        await _deleteSelectedMessages();
+    }
+  }
+
+  Future<void> _manageThread() async {
+    final state = context.read<AppState>();
+    final thread = state.temporaryThreads[widget.deviceId];
+    if (thread == null) {
+      final controller = TextEditingController(text: '临时对话');
+      final title = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('新建临时对话'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 60,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text('创建'),
+            ),
+          ],
+        ),
+      );
+      controller.dispose();
+      if (title == null || title.isEmpty) return;
+      final result = await state.core.call('create_thread', {
+        'device_id': widget.deviceId,
+        'title': title,
+      });
+      await state.refreshConversations();
+      if (!mounted) return;
+      if (result['ok'] != true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result['error'] as String? ?? '创建失败')),
+        );
+      } else {
+        final conversation =
+            (result['thread'] as Map)['conversation_id'] as String;
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => Scaffold(
+              body: SafeArea(child: ChatPage(deviceId: conversation)),
+            ),
+          ),
+        );
+      }
+    } else {
+      var deleteFiles = false;
+      final both = await showDialog<bool>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('删除临时对话？'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('仅删除本机不会删除对方的记录。选择双方删除会在对方上线后同步执行。此操作不可恢复。'),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: deleteFiles,
+                  onChanged: (value) =>
+                      setDialogState(() => deleteFiles = value ?? false),
+                  title: const Text('删除应用内已下载的本机文件'),
+                  subtitle: const Text('不删除对方文件或额外导出的副本'),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('仅本机'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('双方删除'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (both == null) return;
+      if (both && mounted) {
+        final confirm = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('确认删除双方记录？'),
+            content: const Text('对方无需再次批准，请确认此会话不再需要。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('确认删除'),
+              ),
+            ],
+          ),
+        );
+        if (confirm != true) return;
+      }
+      final result = await state.core.call('delete_thread', {
+        'thread_id': thread.id,
+        'both': both,
+        'delete_local_files': deleteFiles,
+      });
+      await state.refreshConversations();
+      if (!mounted) return;
+      if (result['ok'] == true) {
+        if (Navigator.canPop(context)) {
+          Navigator.pop(context);
+        } else {
+          widget.onBack?.call();
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result['error'] as String? ?? '删除失败')),
+        );
+      }
+    }
+  }
+
   Future<void> _sendText() async {
     final text = _input.text.trim();
     if (text.isEmpty) return;
@@ -324,9 +522,8 @@ class _ChatPageState extends State<ChatPage> {
                                     peerName: name,
                                     imagePreviewEnabled:
                                         state.imagePreviewEnabled,
-                                    onLongPress: () => _toggleMessageSelection(
-                                      entry.message!.id,
-                                    ),
+                                    onLongPress: () =>
+                                        _showMessageActions(entry.message!),
                                     selected: _selectedMessages.contains(
                                       entry.message!.id,
                                     ),
@@ -664,6 +861,22 @@ class _ChatPageState extends State<ChatPage> {
                   ),
                 ),
               ],
+            ),
+          ),
+          IconButton(
+            onPressed: trusted ? _manageThread : null,
+            tooltip:
+                context.read<AppState>().temporaryThreads.containsKey(
+                  widget.deviceId,
+                )
+                ? '删除临时对话'
+                : '新建临时对话',
+            icon: Icon(
+              context.read<AppState>().temporaryThreads.containsKey(
+                    widget.deviceId,
+                  )
+                  ? Icons.delete_outline_rounded
+                  : Icons.add_comment_rounded,
             ),
           ),
           if (trusted)

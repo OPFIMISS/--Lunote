@@ -25,6 +25,7 @@ import io.flutter.plugin.common.MethodChannel
  * 权限 CHANGE_WIFI_MULTICAST_STATE 已在 AndroidManifest.xml 声明。
  */
 class MainActivity : FlutterActivity() {
+    private val noteCredentials by lazy { NoteCredentials(this) }
     private val platformChannel = "com.lunote.lunote_app/platform"
     private var multicastLock: WifiManager.MulticastLock? = null
     private var pendingIntent: Intent? = null
@@ -47,6 +48,7 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             val path = call.argument<String>("path").orEmpty()
             when (call.method) {
+                "noteCredentialAvailable", "rememberNoteCredential", "unlockNoteCredential", "forgetNoteCredential" -> noteCredentials.handle(call, result)
                 "getDeviceModel" -> result.success(deviceModel())
                 "getTreeDisplayName" -> result.success(treeDisplayName(call.argument<String>("treeUri")))
                 "notifyTransfer" -> {
@@ -256,6 +258,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (noteCredentials.onActivityResult(requestCode, resultCode, data)) return
         if (requestCode == receiveFolderRequestCode) {
             val result = pendingReceiveFolderResult ?: return
             pendingReceiveFolderResult = null
@@ -702,6 +705,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        noteCredentials.dispose()
         try {
             multicastLock?.release()
         } catch (_: Exception) {

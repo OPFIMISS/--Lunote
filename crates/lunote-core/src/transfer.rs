@@ -54,6 +54,7 @@ pub struct SendFile {
 struct IncomingState {
     transfer_id: String,
     peer: String,
+    thread_id: Option<String>,
     file_name: String,
     rel_parts: Vec<String>,
     size: u64,
@@ -79,6 +80,7 @@ struct IncomingState {
 struct OutgoingState {
     transfer_id: String,
     peer: String,
+    thread_id: Option<String>,
     file_name: String,
     #[allow(dead_code)]
     rel_parts: Vec<String>,
@@ -171,6 +173,15 @@ impl TransferManager {
         peer: &str,
         files: Vec<SendFile>,
     ) -> Result<Vec<String>> {
+        self.send_files_in_thread(peer, files, None).await
+    }
+
+    pub async fn send_files_in_thread(
+        self: &Arc<Self>,
+        peer: &str,
+        files: Vec<SendFile>,
+        thread_id: Option<&str>,
+    ) -> Result<Vec<String>> {
         let trusted = self.trust.lock().unwrap().is_trusted(peer);
         if !trusted {
             bail!("设备未信任，不能发送文件（请先在信任列表确认）");
@@ -179,9 +190,27 @@ impl TransferManager {
         if !session.is_connected(peer) {
             session.connect_to(peer).await?;
         }
+        if let Some(id) = thread_id {
+            let thread = self
+                .store
+                .threads(Some(peer))?
+                .into_iter()
+                .find(|t| t.id == id && !t.deleted && !t.hidden)
+                .ok_or_else(|| anyhow!("临时对话已删除"))?;
+            session
+                .send_control(
+                    peer,
+                    Control::ThreadState {
+                        id: thread.id,
+                        title: thread.title,
+                        deleted: false,
+                    },
+                )
+                .await?;
+        }
         let mut ids = Vec::new();
         for f in files {
-            let id = self.spawn_outgoing(peer, f).await?;
+            let id = self.spawn_outgoing(peer, f, thread_id).await?;
             ids.push(id);
         }
         Ok(ids)
@@ -332,15 +361,17 @@ impl TransferManager {
             }
         };
         if let Some((peer, info)) = incoming_cancel {
-            self.send_control(
-                &peer,
-                Control::FileCancel {
-                    transfer_id: transfer_id.to_string(),
-                    reason: "用户取消".into(),
-                },
-            )
-            .await?;
+            // Local cancellation remains valid even when its peer has disconnected.
             self.emit_update(info);
+            let _ = self
+                .send_control(
+                    &peer,
+                    Control::FileCancel {
+                        transfer_id: transfer_id.to_string(),
+                        reason: "用户取消".into(),
+                    },
+                )
+                .await;
             return Ok(());
         }
         // 发方向：通知发送任务
@@ -412,8 +443,39 @@ impl TransferManager {
                 out.push(st.into_info());
             }
         }
+        if let Ok(threads) = self.store.threads(None) {
+            let hidden: std::collections::HashSet<_> = threads
+                .into_iter()
+                .filter(|t| t.deleted || t.hidden)
+                .map(|t| t.id)
+                .collect();
+            out.retain(|t| !t.thread_id.as_ref().is_some_and(|id| hidden.contains(id)));
+        }
         out.sort_by(|a, b| b.ts_ms.cmp(&a.ts_ms));
         out
+    }
+
+    pub async fn cancel_thread(&self, peer: &str, thread_id: &str) -> Result<()> {
+        let ids: Vec<String> = self
+            .list()
+            .into_iter()
+            .filter(|t| {
+                t.peer_device_id == peer
+                    && t.thread_id.as_deref() == Some(thread_id)
+                    && matches!(
+                        t.state,
+                        TransferState::Offered
+                            | TransferState::Accepted
+                            | TransferState::InProgress
+                            | TransferState::Paused
+                    )
+            })
+            .map(|t| t.transfer_id)
+            .collect();
+        for id in ids {
+            self.cancel_transfer(&id).await?;
+        }
+        Ok(())
     }
 
     // ---------- 会话分发入口 ----------
@@ -506,6 +568,7 @@ impl TransferManager {
     async fn on_offer(&self, peer: &str, control: Control) -> Result<()> {
         let Control::FileOffer {
             transfer_id,
+            thread_id,
             name,
             size,
             sha256,
@@ -534,6 +597,7 @@ impl TransferManager {
             let info = TransferInfo {
                 transfer_id: transfer_id.clone(),
                 peer_device_id: peer.to_string(),
+                thread_id: None,
                 direction: Direction::Incoming,
                 state: TransferState::Rejected,
                 file_name: sanitize_file_name(&name),
@@ -547,6 +611,24 @@ impl TransferManager {
             };
             self.emit_update(info);
             return Ok(());
+        }
+        if let Some(id) = &thread_id {
+            let valid = self
+                .store
+                .threads(Some(peer))?
+                .into_iter()
+                .any(|t| t.id == *id && !t.deleted);
+            if !valid {
+                self.send_control(
+                    peer,
+                    Control::FileReject {
+                        transfer_id,
+                        reason: "临时对话不存在或已删除".into(),
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
         }
         let safe_name = sanitize_file_name(&name);
         let rel_parts = match rel_path {
@@ -567,6 +649,7 @@ impl TransferManager {
         let st = IncomingState {
             transfer_id: transfer_id.clone(),
             peer: peer.to_string(),
+            thread_id,
             file_name: safe_name,
             rel_parts,
             size,
@@ -1107,7 +1190,12 @@ impl TransferManager {
 
     // ---------- 发方向 ----------
 
-    async fn spawn_outgoing(self: &Arc<Self>, peer: &str, file: SendFile) -> Result<String> {
+    async fn spawn_outgoing(
+        self: &Arc<Self>,
+        peer: &str,
+        file: SendFile,
+        thread_id: Option<&str>,
+    ) -> Result<String> {
         let meta = tokio::fs::metadata(&file.path).await?;
         if !meta.is_file() {
             bail!("不是普通文件: {}", file.path.display());
@@ -1125,6 +1213,10 @@ impl TransferManager {
         let resume_token = {
             let mut h = Sha256::new();
             h.update(peer.as_bytes());
+            if let Some(id) = thread_id {
+                h.update(b"|thread:");
+                h.update(id.as_bytes());
+            }
             h.update(b"|");
             for p in &file.rel_parts {
                 h.update(p.as_bytes());
@@ -1150,6 +1242,7 @@ impl TransferManager {
             OutgoingState {
                 transfer_id: transfer_id.clone(),
                 peer: peer.to_string(),
+                thread_id: thread_id.map(str::to_string),
                 file_name: file_name.clone(),
                 rel_parts: file.rel_parts.clone(),
                 path: file.path.clone(),
@@ -1203,6 +1296,12 @@ impl TransferManager {
         // 1) 提议
         let offer = Control::FileOffer {
             transfer_id: transfer_id.clone(),
+            thread_id: self
+                .outgoing
+                .lock()
+                .unwrap()
+                .get(&transfer_id)
+                .and_then(|s| s.thread_id.clone()),
             name: file_name.clone(),
             size,
             sha256: None, // 发送前不整文件预哈希（避免二次读盘），以 FileDone 哈希为准
@@ -1211,6 +1310,7 @@ impl TransferManager {
             resume_token: Some(resume_token),
         };
         let mut failed: Option<String> = None;
+        let mut failure_state = TransferState::Failed;
         if let Err(e) = self.send_control(&peer, offer).await {
             failed = Some(format!("发送文件提议失败: {}", e));
         } else {
@@ -1358,16 +1458,62 @@ impl TransferManager {
                             .copied()
                             .unwrap_or(false);
                         if is_paused {
+                            state.state = TransferState::Paused;
                             if let Some(s) = self.outgoing.lock().unwrap().get_mut(&transfer_id) {
                                 if s.state != TransferState::Paused {
                                     s.state = TransferState::Paused;
                                     self.emit_update(s.into_info());
                                 }
                             }
-                            tokio::time::sleep(Duration::from_millis(120)).await;
+                            // Pausing stops data, not cancellation, ACKs or disconnect handling.
+                            match tokio::time::timeout(Duration::from_millis(120), rx.recv()).await
+                            {
+                                Ok(Some(OutgoingMsg::Control(Control::ChunkAck {
+                                    seq: ack_seq,
+                                    offset: ack_offset,
+                                    ..
+                                }))) => {
+                                    in_flight = in_flight
+                                        .saturating_sub(ack_seq.saturating_sub(state.chunk_seq));
+                                    state.chunk_seq = ack_seq;
+                                    state.sent = ack_offset;
+                                    self.throttled_emit_outgoing(&transfer_id, &mut state).await;
+                                }
+                                Ok(Some(OutgoingMsg::Control(Control::FileCancel {
+                                    reason,
+                                    ..
+                                }))) => {
+                                    failure_state = TransferState::Canceled;
+                                    failed = Some(format!("取消: {}", reason));
+                                    let _ = self
+                                        .send_control(
+                                            &peer,
+                                            Control::FileCancel {
+                                                transfer_id: transfer_id.clone(),
+                                                reason,
+                                            },
+                                        )
+                                        .await;
+                                    break;
+                                }
+                                Ok(Some(OutgoingMsg::Disconnected(reason))) => {
+                                    failed = Some(format!("连接断开（可续传）: {}", reason));
+                                    break;
+                                }
+                                Ok(None) => {
+                                    failed = Some("发送任务控制通道已关闭".into());
+                                    break;
+                                }
+                                Err(_) => {}
+                                _ => {
+                                    failed = Some("暂停期间收到意外控制消息".into());
+                                    break;
+                                }
+                            }
                             continue;
                         } else if let Some(s) = self.outgoing.lock().unwrap().get_mut(&transfer_id)
                         {
+                            state.state = TransferState::InProgress;
                             if s.state == TransferState::Paused {
                                 s.state = TransferState::InProgress;
                                 self.emit_update(s.into_info());
@@ -1428,6 +1574,7 @@ impl TransferManager {
                                 reason, ..
                             }))) => {
                                 // 本地或远端取消：通知对端（若来自本地 UI）
+                                failure_state = TransferState::Canceled;
                                 failed = Some(format!("对端取消: {}", reason));
                                 let _ = self
                                     .send_control(
@@ -1525,7 +1672,7 @@ impl TransferManager {
         }
 
         if let Some(err) = failed {
-            self.finish_outgoing(&transfer_id, TransferState::Failed, Some(err))
+            self.finish_outgoing(&transfer_id, failure_state, Some(err))
                 .await;
         } else {
             self.finish_outgoing(&transfer_id, TransferState::Done, None)
@@ -1549,6 +1696,8 @@ impl TransferManager {
             self.emit_update(info);
         }
         self.outgoing.lock().unwrap().remove(transfer_id);
+        self.outgoing_tx.lock().unwrap().remove(transfer_id);
+        self.outgoing_paused.lock().unwrap().remove(transfer_id);
     }
 
     async fn partial_matches(&self, path: &Path, offset: u64, expected: &str) -> bool {
@@ -1758,6 +1907,7 @@ impl IncomingState {
         IncomingState {
             transfer_id: self.transfer_id.clone(),
             peer: self.peer.clone(),
+            thread_id: self.thread_id.clone(),
             file_name: self.file_name.clone(),
             rel_parts: self.rel_parts.clone(),
             size: self.size,
@@ -1784,6 +1934,7 @@ impl IncomingState {
         TransferInfo {
             transfer_id: self.transfer_id,
             peer_device_id: self.peer,
+            thread_id: self.thread_id,
             direction: Direction::Incoming,
             state: self.state,
             file_name: self.file_name,
@@ -1805,6 +1956,7 @@ impl OutgoingState {
         TransferInfo {
             transfer_id: self.transfer_id.clone(),
             peer_device_id: self.peer.clone(),
+            thread_id: self.thread_id.clone(),
             direction: Direction::Outgoing,
             state: self.state,
             file_name: self.file_name.clone(),

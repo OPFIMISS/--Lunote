@@ -15,6 +15,7 @@ pub mod discovery;
 pub mod events;
 pub mod identity;
 pub mod messages;
+pub mod notes;
 pub mod platform;
 pub mod runtime;
 pub mod session;

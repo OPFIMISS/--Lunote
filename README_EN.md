@@ -1,5 +1,13 @@
 # Lunote
 
+## Version 2.0.0
+
+Lunote is a serverless LAN messenger and file transfer tool for Android and Windows. This release adds encrypted offline message delivery, independent temporary conversations, selected-device encrypted notes sync, square note cards with privacy blur, full-message actions, and Windows installer/portable/ZIP packages.
+
+The Android application ID and signing configuration remain unchanged so an existing APK can be upgraded in place. The new protocol requires both endpoints to run 2.0.0 for offline messages, temporary conversations, and notes synchronization. File transfer remains compatible with the existing trusted-device flow.
+
+Validation: 4 Rust bridge tests, 28 core tests, 15 real-socket E2E tests, 8 Flutter widget tests, and Flutter analysis passed. Real Windows and LDPlayer Android integration tests cover password-protected notes and restart persistence. Windows-to-Android interoperability verifies bidirectional encrypted note editing, isolated temporary chat messages, and byte-for-byte integrity of a 4 MiB file. Physical-device fingerprint authentication remains unverified.
+
 A cloudless, account-free local messaging and file transfer application for Android, Windows 10+, and Linux.
 
 ## Highlights
@@ -20,11 +28,12 @@ The Flutter application is under `app/`. The Rust core and FFI bridge are under 
 
 ```powershell
 $env:CI='true'
+$env:LUNOTE_SIGNING_KEYSTORE='C:/path/to/the-existing-publishing-key.keystore'
 flutter analyze --no-pub
-flutter build apk --release --no-pub
+flutter build apk --release
 ```
 
-The current Android application version is **1.4.1 (6)**. The application id and signing configuration remain unchanged so release APKs can be updated in place.
+The current Android application version is **2.0.0 (15)**. The application ID is `com.lunote.lunote_app`. The APK certificate SHA-256 is `41a125c42c4a6b466da9bdfff237771cc2a1b213560c175472156a5b85bbcdae`, matching the existing 1.5.7 APK. Release builds require the existing publishing key; private keys must never be committed.
 
 ## Privacy and security
 
@@ -36,7 +45,9 @@ See `docs/协议.md`, `docs/安全模型.md`, and `docs/交付报告.md` for the
 
 ### Android
 
-![Android home](docs/screenshots/android-start.png)
+![Android 2.0 home](docs/screenshots/android-start-2.0.png)
+
+![Android 2.0 notes at phone size](docs/screenshots/android-notes-2.0.png)
 
 ![Android settings](docs/screenshots/android-settings.png)
 
@@ -46,8 +57,18 @@ See `docs/协议.md`, `docs/安全模型.md`, and `docs/交付报告.md` for the
 
 ![Windows home](docs/screenshots/windows-start.png)
 
+![Windows encrypted notes](docs/screenshots/windows-notes-2.0.png)
+
 ## Release
 
-Use tools/publish_github_release.ps1 to verify and upload the tagged APK and release notes after running gh auth login.
+Use `tools/publish_github_release.ps1` to upload the tagged APK, Windows installer, single-file portable EXE, complete ZIP, release notes, and SHA-256 checksums after running `gh auth login`. The portable EXE runs directly without manual installation or extraction and without a visible console window.
 
-Current stable release: [v1.4.1](https://github.com/OPFIMISS/--Lunote/releases/tag/v1.4.1), including `Lunote-1.4.1.apk`, the Windows executable, and a complete Windows x64 archive.
+Version 2.0.0 is completing release verification. Published downloads are available on the [Releases page](https://github.com/OPFIMISS/--Lunote/releases).
+
+## 2.0 Behavior
+
+- Offline messages are queued on the sender. With no server, delivery requires both endpoints to be online at the same time; restarting the sender retains the queue. Delivered means durably saved by the receiver, not read.
+- Temporary conversations are independent on both endpoints. Local deletion hides only the local history; deletion for both endpoints propagates when reconnected. Downloaded files are retained unless explicitly selected for local deletion.
+- Each device selects its trusted note-sync peers once. Selected endpoints synchronize continuously when connected, including changes made offline. Concurrent changes retain a conflict copy rather than silently overwriting content.
+- Note passwords protect the synchronized content, not the visible title. Each device initially enters the same note password independently; Android may then opt into local biometric or screen-lock authentication. Passwords are never synchronized in plaintext.
+- Gaussian blur is a low-privacy visual shield, not encryption. Double-tap reveals shielded content; leaving the notes page or backgrounding the app hides it again.

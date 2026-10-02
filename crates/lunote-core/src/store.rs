@@ -32,6 +32,17 @@ const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ThreadInfo {
+    pub id: String,
+    pub peer_device_id: String,
+    pub conversation_id: String,
+    pub title: String,
+    pub deleted: bool,
+    pub hidden: bool,
+    pub sync_pending: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StoredMessage {
     pub id: String,
     pub direction: Direction,
@@ -39,6 +50,10 @@ pub struct StoredMessage {
     pub text: String,
     pub url: Option<String>,
     pub ts_ms: i64,
+    #[serde(default)]
+    pub delivery: Option<String>,
+    #[serde(default)]
+    pub thread_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -117,6 +132,22 @@ impl Store {
                created_at INTEGER NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at);
+             CREATE TABLE IF NOT EXISTS message_delivery (
+               id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+               acknowledged INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS message_receipts (
+               peer TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(peer, id)
+             );
+             CREATE TABLE IF NOT EXISTS threads (
+               id TEXT PRIMARY KEY, peer TEXT NOT NULL, conversation TEXT NOT NULL UNIQUE,
+               title BLOB NOT NULL, nonce BLOB NOT NULL,
+               deleted INTEGER NOT NULL DEFAULT 0, hidden INTEGER NOT NULL DEFAULT 0,
+               sync_pending INTEGER NOT NULL DEFAULT 1
+             );
+             CREATE TABLE IF NOT EXISTS feature_records (
+               key TEXT PRIMARY KEY, payload BLOB NOT NULL, nonce BLOB NOT NULL
+             );
              CREATE TABLE IF NOT EXISTS transfers (
                id TEXT PRIMARY KEY,
                conversation_id TEXT NOT NULL,
@@ -157,6 +188,35 @@ impl Store {
         Ok(())
     }
 
+    pub(crate) fn load_feature<T: serde::de::DeserializeOwned>(
+        &self,
+        name: &str,
+    ) -> Result<Option<T>> {
+        let conn = self.conn.lock().unwrap();
+        let row: Option<(Vec<u8>, Vec<u8>)> = conn
+            .query_row(
+                "SELECT payload,nonce FROM feature_records WHERE key=?1",
+                params![name],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        row.map(|(ct, nonce)| {
+            Ok(serde_json::from_slice(&aes_decrypt(
+                &self.key,
+                &ct,
+                &nonce,
+                name.as_bytes(),
+            )?)?)
+        })
+        .transpose()
+    }
+
+    pub(crate) fn save_feature<T: Serialize>(&self, name: &str, value: &T) -> Result<()> {
+        let (nonce, ct) = aes_encrypt(&self.key, &serde_json::to_vec(value)?, name.as_bytes())?;
+        self.conn.lock().unwrap().execute("INSERT INTO feature_records(key,payload,nonce) VALUES(?1,?2,?3) ON CONFLICT(key) DO UPDATE SET payload=excluded.payload,nonce=excluded.nonce",params![name,ct,nonce])?;
+        Ok(())
+    }
+
     pub fn conversation_name(&self, device_id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         let name = conn
@@ -178,7 +238,7 @@ impl Store {
         text: &str,
         url: Option<&str>,
         ts_ms: i64,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let plain = serde_json::to_vec(&serde_json::json!({
             "text": text,
             "url": url,
@@ -190,7 +250,7 @@ impl Store {
              ON CONFLICT(device_id) DO NOTHING",
             params![conversation, now_ms()],
         )?;
-        conn.execute(
+        let inserted = conn.execute(
             // 消息 id 由对端提供：重复 id（重放/恶意）用 INSERT OR IGNORE 容忍，
             // 避免主键冲突 → 分发错误 → 整个连接被踢断
             "INSERT OR IGNORE INTO messages(id, conversation_id, direction, kind, payload, nonce, created_at)
@@ -205,6 +265,182 @@ impl Store {
                 ts_ms
             ],
         )?;
+        Ok(inserted != 0)
+    }
+
+    /// The message and delivery marker must survive a crash together.
+    pub fn enqueue_message(
+        &self,
+        peer: &str,
+        id: &str,
+        text: &str,
+        url: Option<&str>,
+        ts: i64,
+    ) -> Result<()> {
+        let (nonce, ct) = aes_encrypt(
+            &self.key,
+            &serde_json::to_vec(&serde_json::json!({"text": text, "url": url}))?,
+            RECORD_AAD,
+        )?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute("INSERT OR IGNORE INTO conversations(device_id, peer_name, created_at) VALUES(?1, '', ?2)", params![peer, ts])?;
+        tx.execute("INSERT INTO messages(id, conversation_id, direction, kind, payload, nonce, created_at) VALUES(?1, ?2, 'outgoing', ?3, ?4, ?5, ?6)", params![id, peer, if url.is_some() { "link" } else { "text" }, ct, nonce, ts])?;
+        tx.execute("INSERT INTO message_delivery(id) VALUES(?1)", params![id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn acknowledge_message(&self, peer: &str, id: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute("UPDATE message_delivery SET acknowledged=1 WHERE id=?1 AND id IN (SELECT id FROM messages WHERE (conversation_id=?2 OR conversation_id IN (SELECT conversation FROM threads WHERE peer=?2)) AND direction='outgoing')", params![id, peer])?;
+        Ok(())
+    }
+
+    /// Receipts remain after local history deletion, preventing retry resurrection.
+    pub fn receive_queued_message(
+        &self,
+        peer: &str,
+        id: &str,
+        text: &str,
+        url: Option<&str>,
+        ts: i64,
+    ) -> Result<bool> {
+        let (nonce, ct) = aes_encrypt(
+            &self.key,
+            &serde_json::to_vec(&serde_json::json!({"text": text, "url": url}))?,
+            RECORD_AAD,
+        )?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let fresh = tx.execute(
+            "INSERT OR IGNORE INTO message_receipts(peer,id) VALUES(?1,?2)",
+            params![peer, id],
+        )? != 0;
+        if fresh {
+            tx.execute(
+                "UPDATE threads SET hidden=0 WHERE conversation=?1 AND deleted=0",
+                params![peer],
+            )?;
+            tx.execute("INSERT OR IGNORE INTO conversations(device_id, peer_name, created_at) VALUES(?1, '', ?2)", params![peer,ts])?;
+            tx.execute("INSERT OR IGNORE INTO messages(id, conversation_id, direction, kind, payload, nonce, created_at) VALUES(?1, ?2, 'incoming', ?3, ?4, ?5, ?6)", params![id,peer,if url.is_some() {"link"} else {"text"},ct,nonce,ts])?;
+        }
+        tx.commit()?;
+        Ok(fresh)
+    }
+
+    pub fn pending_peers(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT DISTINCT COALESCE(t.peer,m.conversation_id) FROM messages m JOIN message_delivery d ON d.id=m.id LEFT JOIN threads t ON t.conversation=m.conversation_id WHERE d.acknowledged=0 AND COALESCE(t.deleted,0)=0 UNION SELECT peer FROM threads WHERE sync_pending=1")?;
+        let peers = stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(peers)
+    }
+
+    pub fn pending_messages(&self, peer: &str) -> Result<Vec<StoredMessage>> {
+        let conn = self.conn.lock().unwrap();
+        self.load_messages_query(&conn, peer, true)
+    }
+
+    pub fn threads(&self, peer: Option<&str>) -> Result<Vec<ThreadInfo>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id,peer,conversation,title,nonce,deleted,hidden,sync_pending FROM threads WHERE ?1 IS NULL OR peer=?1 ORDER BY rowid")?;
+        let rows = stmt.query_map(params![peer], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Vec<u8>>(3)?,
+                r.get::<_, Vec<u8>>(4)?,
+                r.get::<_, bool>(5)?,
+                r.get::<_, bool>(6)?,
+                r.get::<_, bool>(7)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, peer_device_id, conversation_id, ct, nonce, deleted, hidden, sync_pending) =
+                row?;
+            let title = String::from_utf8(aes_decrypt(&self.key, &ct, &nonce, RECORD_AAD)?)?;
+            out.push(ThreadInfo {
+                id,
+                peer_device_id,
+                conversation_id,
+                title,
+                deleted,
+                hidden,
+                sync_pending,
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn create_thread(&self, peer: &str, title: &str) -> Result<ThreadInfo> {
+        let id = crate::messages::new_id();
+        self.apply_thread(peer, &id, title, false, true)?;
+        self.threads(Some(peer))?
+            .into_iter()
+            .find(|t| t.id == id)
+            .ok_or_else(|| anyhow!("临时对话创建失败"))
+    }
+
+    pub fn apply_thread(
+        &self,
+        peer: &str,
+        id: &str,
+        title: &str,
+        deleted: bool,
+        local: bool,
+    ) -> Result<()> {
+        if uuid::Uuid::parse_str(id).is_err() || title.is_empty() || title.len() > 256 {
+            bail!("临时对话格式非法");
+        }
+        let conversation = format!("thread:{}:{}", peer, id);
+        let (nonce, ct) = aes_encrypt(&self.key, title.as_bytes(), RECORD_AAD)?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let owner: Option<String> = tx
+            .query_row("SELECT peer FROM threads WHERE id=?1", params![id], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if owner.as_deref().is_some_and(|p| p != peer) {
+            bail!("临时对话不属于该设备");
+        }
+        tx.execute("INSERT INTO threads(id,peer,conversation,title,nonce,deleted,sync_pending) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(id) DO UPDATE SET deleted=MAX(threads.deleted,excluded.deleted), sync_pending=CASE WHEN ?7 THEN 1 ELSE threads.sync_pending END",params![id,peer,conversation,ct,nonce,deleted,local])?;
+        if deleted {
+            tx.execute(
+                "DELETE FROM messages WHERE conversation_id=?1",
+                params![conversation],
+            )?;
+            tx.execute(
+                "DELETE FROM transfers WHERE conversation_id=?1",
+                params![conversation],
+            )?;
+            tx.execute(
+                "DELETE FROM conversations WHERE device_id=?1",
+                params![conversation],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn hide_thread(&self, id: &str) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute("UPDATE threads SET hidden=1 WHERE id=?1", params![id])?;
+        tx.execute("DELETE FROM messages WHERE conversation_id IN (SELECT conversation FROM threads WHERE id=?1)",params![id])?;
+        tx.execute("DELETE FROM transfers WHERE conversation_id IN (SELECT conversation FROM threads WHERE id=?1)",params![id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn acknowledge_thread(&self, peer: &str, id: &str, deleted: bool) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE threads SET sync_pending=0 WHERE id=?1 AND peer=?2 AND deleted=?3",
+            params![id, peer, deleted],
+        )?;
         Ok(())
     }
 
@@ -217,10 +453,32 @@ impl Store {
             _ => (None, None),
         };
         let conn = self.conn.lock().unwrap();
+        let conversation = match &t.thread_id {
+            Some(id) => {
+                let state: Option<(String, bool, bool)> = conn
+                    .query_row(
+                        "SELECT conversation,deleted,hidden FROM threads WHERE id=?1 AND peer=?2",
+                        params![id, t.peer_device_id],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    )
+                    .optional()?;
+                let Some((conversation, deleted, hidden)) = state else {
+                    bail!("传输临时对话不存在");
+                };
+                if deleted || (hidden && t.state != TransferState::Offered) {
+                    return Ok(());
+                }
+                if hidden && t.direction == Direction::Incoming {
+                    conn.execute("UPDATE threads SET hidden=0 WHERE id=?1", params![id])?;
+                }
+                conversation
+            }
+            None => t.peer_device_id.clone(),
+        };
         conn.execute(
             "INSERT INTO conversations(device_id, peer_name, created_at) VALUES(?1, '', ?2)
              ON CONFLICT(device_id) DO NOTHING",
-            params![t.peer_device_id, now_ms()],
+            params![conversation, now_ms()],
         )?;
         conn.execute(
             "INSERT INTO transfers(
@@ -238,7 +496,7 @@ impl Store {
                updated_at=excluded.updated_at",
             params![
                 t.transfer_id,
-                t.peer_device_id,
+                conversation,
                 dir_str(t.direction),
                 t.file_name,
                 t.file_size as i64,
@@ -291,23 +549,44 @@ impl Store {
         conn: &Connection,
         conversation: &str,
     ) -> Result<Vec<StoredMessage>> {
+        self.load_messages_query(conn, conversation, false)
+    }
+
+    fn load_messages_query(
+        &self,
+        conn: &Connection,
+        conversation: &str,
+        pending_only: bool,
+    ) -> Result<Vec<StoredMessage>> {
         let mut stmt = conn.prepare(
-            "SELECT id, direction, kind, payload, nonce, created_at FROM messages
-             WHERE conversation_id=?1 ORDER BY created_at ASC",
+            "SELECT id, direction, kind, payload, nonce, created_at,
+             (SELECT acknowledged FROM message_delivery WHERE message_delivery.id=messages.id),
+             (SELECT id FROM threads WHERE conversation=messages.conversation_id) FROM messages
+             WHERE (conversation_id=?1 OR (?2=1 AND conversation_id IN (SELECT conversation FROM threads WHERE peer=?1 AND deleted=0))) AND (?2=0 OR id IN (SELECT id FROM message_delivery WHERE acknowledged=0))
+             ORDER BY created_at ASC, rowid ASC LIMIT ?3",
         )?;
-        let rows = stmt.query_map(params![conversation], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, Vec<u8>>(3)?,
-                r.get::<_, Vec<u8>>(4)?,
-                r.get::<_, i64>(5)?,
-            ))
-        })?;
+        let rows = stmt.query_map(
+            params![
+                conversation,
+                pending_only,
+                if pending_only { 64i64 } else { -1i64 }
+            ],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Vec<u8>>(3)?,
+                    r.get::<_, Vec<u8>>(4)?,
+                    r.get::<_, i64>(5)?,
+                    r.get::<_, Option<bool>>(6)?,
+                    r.get::<_, Option<String>>(7)?,
+                ))
+            },
+        )?;
         let mut out = Vec::new();
         for row in rows {
-            let (id, direction, kind, ct, nonce, ts) = row?;
+            let (id, direction, kind, ct, nonce, ts, acknowledged, thread_id) = row?;
             let plain = aes_decrypt(&self.key, &ct, &nonce, RECORD_AAD)
                 .map_err(|_| anyhow!("记录解密失败（密钥不匹配？）"))?;
             let v: serde_json::Value = serde_json::from_slice(&plain)?;
@@ -322,6 +601,9 @@ impl Store {
                     .to_string(),
                 url: v.get("url").and_then(|x| x.as_str()).map(|s| s.to_string()),
                 ts_ms: ts,
+                delivery: acknowledged
+                    .map(|done| if done { "delivered" } else { "pending" }.to_string()),
+                thread_id,
             });
         }
         Ok(out)
@@ -332,6 +614,13 @@ impl Store {
         conn: &Connection,
         conversation: &str,
     ) -> Result<Vec<TransferInfo>> {
+        let thread: Option<(String, String)> = conn
+            .query_row(
+                "SELECT id,peer FROM threads WHERE conversation=?1",
+                params![conversation],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
         let mut stmt = conn.prepare(
             "SELECT id, direction, file_name, file_size, state, transferred, resume_offset, error,
                     local_path, local_path_nonce, created_at
@@ -375,7 +664,11 @@ impl Store {
             };
             out.push(TransferInfo {
                 transfer_id: id,
-                peer_device_id: conversation.to_string(),
+                peer_device_id: thread
+                    .as_ref()
+                    .map(|(_, peer)| peer.clone())
+                    .unwrap_or_else(|| conversation.to_string()),
+                thread_id: thread.as_ref().map(|(id, _)| id.clone()),
                 direction: dir_from_str(&direction)?,
                 state: state_from_str(&state)?,
                 file_name: name,
@@ -395,7 +688,7 @@ impl Store {
     pub fn wipe(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch(
-            "DELETE FROM messages; DELETE FROM transfers; DELETE FROM conversations;",
+            "DELETE FROM messages; DELETE FROM transfers; DELETE FROM conversations; DELETE FROM threads;",
         )?;
         Ok(())
     }
@@ -462,6 +755,7 @@ impl Store {
         let payload = serde_json::to_vec(&serde_json::json!({
             "exported_at": now_ms(),
             "conversations": conversations,
+            "threads": self.threads(None)?,
         }))?;
 
         let mut salt = [0u8; SALT_LEN];
@@ -533,8 +827,33 @@ impl Store {
         .context("导出内容结构错误")?;
 
         let mut report = ImportReport::default();
+        let threads: Vec<ThreadInfo> = serde_json::from_value(
+            v.get("threads")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+        )?;
+        for thread in threads {
+            self.apply_thread(
+                &thread.peer_device_id,
+                &thread.id,
+                &thread.title,
+                thread.deleted,
+                true,
+            )?;
+            if thread.hidden {
+                self.hide_thread(&thread.id)?;
+            }
+        }
         let conn = self.conn.lock().unwrap();
         for conv in conversations {
+            let deleted: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM threads WHERE conversation=?1 AND deleted=1)",
+                params![conv.device_id],
+                |r| r.get(0),
+            )?;
+            if deleted {
+                continue;
+            }
             conn.execute(
                 "INSERT INTO conversations(device_id, peer_name, created_at) VALUES(?1, ?2, ?3)
                  ON CONFLICT(device_id) DO UPDATE SET peer_name = CASE WHEN excluded.peer_name <> '' THEN excluded.peer_name ELSE peer_name END",
@@ -596,7 +915,7 @@ impl Store {
 
 // ---------- 加密与派生 ----------
 
-fn aes_encrypt(key: &[u8; 32], plain: &[u8], aad: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+pub(crate) fn aes_encrypt(key: &[u8; 32], plain: &[u8], aad: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
     let cipher = Aes256Gcm::new_from_slice(key).expect("AES-256-GCM 密钥长度固定");
     let mut nonce = [0u8; NONCE_LEN];
     rand::rngs::OsRng.fill_bytes(&mut nonce);
@@ -606,7 +925,7 @@ fn aes_encrypt(key: &[u8; 32], plain: &[u8], aad: &[u8]) -> Result<(Vec<u8>, Vec
     Ok((nonce.to_vec(), ct))
 }
 
-fn aes_decrypt(key: &[u8; 32], ct: &[u8], nonce: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn aes_decrypt(key: &[u8; 32], ct: &[u8], nonce: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
     // 防御：本地库 nonce 列被损坏/篡改时长度≠12，返回错误而非 panic
     if nonce.len() != 12 {
         anyhow::bail!("记录 nonce 长度异常（{}），本地记录可能已损坏", nonce.len());
@@ -617,7 +936,7 @@ fn aes_decrypt(key: &[u8; 32], ct: &[u8], nonce: &[u8], aad: &[u8]) -> Result<Ve
         .map_err(|_| anyhow!("AES-256-GCM 解密失败（完整性校验未通过）"))
 }
 
-fn derive_kek(password: &str, salt: &[u8], out: &mut [u8; 32]) -> Result<()> {
+pub(crate) fn derive_kek(password: &str, salt: &[u8], out: &mut [u8; 32]) -> Result<()> {
     let params =
         Params::new(64 * 1024, 3, 1, Some(32)).map_err(|e| anyhow!("Argon2 参数错误: {}", e))?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
@@ -712,12 +1031,50 @@ fn hex_decode(s: &str) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn queue_is_encrypted_and_receipts_survive_history_deletion() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = super::Store::open(dir.path()).unwrap();
+        let id = crate::messages::new_id();
+        store
+            .enqueue_message("peer-a", &id, "unique-api-key-secret", None, 1)
+            .unwrap();
+        store.acknowledge_message("wrong-peer", &id).unwrap();
+        assert_eq!(store.pending_messages("peer-a").unwrap().len(), 1);
+        store.acknowledge_message("peer-a", &id).unwrap();
+        assert!(store.pending_messages("peer-a").unwrap().is_empty());
+        let incoming = crate::messages::new_id();
+        assert!(store
+            .receive_queued_message("peer-a", &incoming, "incoming-secret", None, 2)
+            .unwrap());
+        store.delete_messages(&[incoming.clone()]).unwrap();
+        assert!(!store
+            .receive_queued_message("peer-a", &incoming, "incoming-secret", None, 2)
+            .unwrap());
+        let thread = store
+            .create_thread("peer-a", "secret-thread-title")
+            .unwrap();
+        for name in ["records.db", "records.db-wal"] {
+            if let Ok(bytes) = std::fs::read(dir.path().join(name)) {
+                let raw = String::from_utf8_lossy(&bytes);
+                assert!(!raw.contains("unique-api-key-secret"));
+                assert!(!raw.contains("incoming-secret"));
+                assert!(!raw.contains("secret-thread-title"));
+            }
+        }
+        store
+            .apply_thread("peer-b", &thread.id, "fake", true, false)
+            .unwrap_err();
+        store.delete_messages(&[id]).unwrap();
+        assert!(store.pending_messages("peer-a").unwrap().is_empty());
+    }
     use super::*;
 
     fn sample_info(id: &str, peer: &str) -> TransferInfo {
         TransferInfo {
             transfer_id: id.into(),
             peer_device_id: peer.into(),
+            thread_id: None,
             direction: Direction::Incoming,
             state: TransferState::Done,
             file_name: "机密名单.txt".into(),
